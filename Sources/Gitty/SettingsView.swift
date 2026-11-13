@@ -41,6 +41,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            UpdateSettingsSection()
+
             Section("기록") {
                 LabeledContent("작업 기록 파일") {
                     Button("Finder에서 보기") {

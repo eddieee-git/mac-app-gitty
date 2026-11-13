@@ -14,6 +14,9 @@ final class LocalBrowser {
         }
     }
     private(set) var items: [FileItem] = []
+    /// 폴더를 읽는 중 (Google Drive·네트워크 폴더는 몇 초 걸릴 수 있다)
+    private(set) var loading = false
+    @ObservationIgnored private var loadToken = 0
     /// 다시 읽을 때마다 올라간다. 폴더 트리가 이 값을 보고 새로 그린다.
     private(set) var revision = 0
     nonisolated static let alwaysHidden: Set<String> = [".DS_Store"]
@@ -43,14 +46,37 @@ final class LocalBrowser {
         return (URL(fileURLWithPath: "/"), "Macintosh HD", "internaldrive.fill", rest)
     }
 
+    /// 폴더 내용을 뒤에서 읽는다. 화면은 그동안 멈추지 않는다.
     func reload() {
-        var target = dir
-        while !FileManager.default.fileExists(atPath: target.path) && target.path != "/" {
-            target = target.deletingLastPathComponent()
+        loadToken += 1
+        let token = loadToken
+        let dir = self.dir
+        let showHidden = self.showHidden
+        let previous = items.first?.url.deletingLastPathComponent().standardizedFileURL.path
+        let changedDir = previous != nil && previous != dir.standardizedFileURL.path
+        loading = true
+        Task {
+            let (existing, list) = await Task.detached(priority: .userInitiated) {
+                var target = dir
+                while !FileManager.default.fileExists(atPath: target.path) && target.path != "/" {
+                    target = target.deletingLastPathComponent()
+                }
+                let list = target == dir ? FileItem.list(in: dir, includeHidden: showHidden, alwaysHidden: Self.alwaysHidden) : []
+                return (target, list)
+            }.value
+            guard token == loadToken else { return }   // 그사이 다른 폴더로 갔음
+            if existing != dir { self.dir = existing; return }   // 폴더가 사라짐: didSet이 상위 폴더를 다시 읽는다
+            items = list
+            loading = false
+            revision += 1
         }
-        if target != dir { dir = target; return }   // didSet이 다시 reload
-        items = FileItem.list(in: dir, includeHidden: showHidden, alwaysHidden: Self.alwaysHidden)
-        revision += 1
+        // 오래 걸리면 이전 폴더 내용을 치우고 "불러오는 중"을 보여 준다
+        if changedDir {
+            Task {
+                try? await Task.sleep(for: .milliseconds(150))
+                if token == loadToken, loading { items = [] }
+            }
+        }
     }
 
     func goUp() {

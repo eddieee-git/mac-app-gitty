@@ -14,6 +14,7 @@ struct LocalPaneView: View {
     @State private var query = ""
     @State private var results: [FileItem]?
     @State private var searching = false
+    @State private var partial = false
     @AppStorage("showLocalTree") private var showTree = true
 
     private var local: LocalBrowser { model.local }
@@ -132,7 +133,7 @@ struct LocalPaneView: View {
         FileTable(pane: Self.paneName,
                   items: shownItems,
                   selection: $selection,
-                  emptyTitle: results == nil ? "빈 폴더입니다" : (searching ? "찾는 중…" : "검색 결과가 없어요"),
+                  emptyTitle: results == nil ? (local.loading ? "불러오는 중…" : "빈 폴더입니다") : (searching ? "찾는 중…" : "검색 결과가 없어요"),
                   emptyHint: results == nil ? "오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다" : "하위 폴더까지 이름으로 찾아요",
                   onOpen: open,
                   onDelete: trash) { items in
@@ -176,7 +177,7 @@ struct LocalPaneView: View {
     private func searchBanner(count: Int) -> some View {
         HStack(spacing: 6) {
             if searching { ProgressView().controlSize(.mini) }
-            Text(searching ? "찾는 중…" : "‘\(query)’ \(count >= 1000 ? "1000개 이상" : "\(count)개") · 하위 폴더 포함")
+            Text(searching ? "찾는 중…" : "‘\(query)’ \(count)개\(partial ? " · 일부만 찾았어요 (더 좁은 폴더에서 찾아 보세요)" : " · 하위 폴더 포함")")
         }
         .font(.caption)
         .padding(.horizontal, 10)
@@ -210,11 +211,10 @@ struct LocalPaneView: View {
         searching = true
         if results == nil { results = [] }
         let dir = local.dir, showHidden = local.showHidden
-        let found = await Task.detached(priority: .userInitiated) {
-            FileItem.search(text, in: dir, includeHidden: showHidden, alwaysHidden: LocalBrowser.alwaysHidden)
-        }.value
+        let found = await FileItem.search(text, in: dir, includeHidden: showHidden, alwaysHidden: LocalBrowser.alwaysHidden)
         guard !Task.isCancelled else { return }
-        results = found
+        results = found.items
+        partial = found.partial
         searching = false
     }
 

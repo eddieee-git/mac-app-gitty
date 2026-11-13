@@ -24,6 +24,8 @@
 - **자동 동기화**: 몇 분마다 원격을 확인해서 다른 곳에서 올린 변경을 받아 와요.
 - **검색**: 하위 폴더까지 이름으로 찾아요.
 - **진행 로그**: 무엇을 올리고 받았는지 창 아래에 실시간으로 보이고, 파일로도 남아요.
+- **되돌리기와 변경 기록**: 마지막 Git 작업을 ⌥⌘Z로 되돌리고, 파일 오른쪽 클릭 → **변경 기록…**에서 지난 버전을 열거나 그 버전으로 되돌려요.
+- **자동 업데이트**: 새 버전이 나오면 알려 주고 내려받아 줘요. 설정에서 켜면 종료할 때 알아서 설치해요.
 - **private 저장소 지원**: GitHub CLI(`gh`)에 로그인한 계정으로 인증해요. 토큰을 따로 넣을 필요가 없어요.
 
 ## 설치
@@ -35,6 +37,8 @@
    - **macOS 14(Sonoma)**: 응용 프로그램 폴더에서 Gitty를 **오른쪽 클릭 → 열기**를 눌러요.
 
    터미널이 편하면 `xattr -dr com.apple.quarantine /Applications/Gitty.app`을 실행해도 돼요.
+
+그다음부터는 Gitty가 새 버전을 알려 줘요. 메뉴 **Gitty → 업데이트 확인…**으로 직접 확인할 수도 있어요.
 
 ### 필요한 것
 
@@ -61,19 +65,21 @@
 |---|---|
 | ⌘R | 원격과 동기화 (pull, 밀린 push) |
 | ⌘O | 파일 골라서 Git에 업로드 |
-| ⌘, | 설정 (자동 동기화 간격, Git LFS 상태) |
+| ⌘, | 설정 (자동 동기화 간격, 업데이트, Git LFS 상태) |
+| ⌥⌘Z | 마지막 Git 작업 되돌리기 |
 | ⌥⌘L | 전체 작업 기록 |
 | ⌫ (Delete) | 선택 항목 삭제 (Git은 확인 후, 내 폴더는 휴지통으로) |
 | 더블클릭 | 폴더 열기 / 파일 열기 |
 
 ## 알아두면 좋은 점
 
-- 저장소는 `~/Library/Application Support/Gitty/Repos/`에 클론돼요.
+- 저장소는 `~/Library/Application Support/Gitty/Repos/`에 클론돼요. Gitty는 자기가 한 작업의 파일만 커밋해요. 클론 폴더에 직접 넣은 파일이나 Finder의 `.DS_Store`는 올라가지 않아요.
 - GitHub는 100MB가 넘는 파일을 일반 git으로 받지 않아서 Git LFS로 올려요. 파일 하나 2GB까지, GitHub 무료 요금제의 LFS 용량은 1GB예요.
 - git은 빈 폴더를 저장하지 않아서, 새 폴더에는 숨김 파일 `.gitkeep`이 들어가요.
 - 삭제해도 git 히스토리에는 남아 있어요. 내 폴더 쪽에서 덮어쓰거나 지운 파일은 휴지통으로 가요.
 - push에 실패하면 아래 상태 표시줄에 "push 안 된 커밋"이 보여요. **다시 시도**를 누르면 돼요.
 - 작업 기록은 `~/Library/Logs/Gitty/gitty.log`에 있어요. 문제가 생기면 이 파일을 보면 원인을 알 수 있어요.
+- 업데이트는 6시간마다 GitHub 릴리스를 확인하고, 설치 전에 서명을 확인해요. **업데이트를 자동으로 설치**를 켜면 새 버전을 미리 받아 두었다가 Gitty를 종료할 때 바꿔 끼워요(응용 프로그램 폴더처럼 쓰기 권한이 있는 곳에 설치했을 때).
 - 데스크탑·문서·다운로드·Google Drive를 처음 열면 macOS가 접근 허용을 물어요. 한 번 허용하면 돼요.
 
 ## 빌드
@@ -82,8 +88,24 @@ Xcode 없이 Command Line Tools만으로 빌드해요.
 
 ```bash
 ./scripts/build-app.sh      # build/Gitty.app, build/Gitty-<버전>.dmg
-./scripts/release.sh        # 태그를 달고 GitHub 릴리스에 dmg 첨부
+./scripts/release.sh        # 태그를 달고 GitHub 릴리스에 dmg와 서명(.sig) 첨부
+./scripts/test.sh           # 동작 시험 (로컬 저장소로, GitHub에 아무것도 안 보냄)
 ./scripts/make-icon.sh      # 앱 아이콘 다시 그리기 (Resources/AppIcon.icns)
 ```
 
 버전은 `Resources/Info.plist`의 `CFBundleShortVersionString`, 릴리스 노트는 `docs/releases/v<버전>.md`에 써요.
+
+### 업데이트 서명
+
+앱은 업데이트 dmg를 설치하기 전에 Ed25519 서명을 확인해요. 공개 키는 `Resources/Info.plist`의 `GittyUpdatePublicKey`에, 비밀 키는 릴리스하는 Mac의 로그인 키체인("Gitty Update Signing")에만 있어요. 그래서 GitHub 계정이나 릴리스가 털려도 가짜 dmg는 설치되지 않아요. 서명 파일이 없거나 맞지 않는 릴리스는 받지 않아요.
+
+```bash
+swift scripts/update-signing.swift public-key   # 키체인의 키로 공개 키 확인
+swift scripts/update-signing.swift keygen       # 새 키 만들기 (처음 한 번)
+```
+
+비밀 키를 잃어버리면 새 키를 넣은 버전을 사용자가 한 번 직접 설치해야 해요. 키체인 접근에서 항목을 백업해 두세요.
+
+## 라이선스
+
+MIT

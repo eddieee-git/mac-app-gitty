@@ -1,6 +1,9 @@
 import Foundation
 
 struct FileItem: Identifiable, Hashable {
+    /// 정렬용 (폴더는 크기 없음)
+    var sortSize: Int64 { isDirectory ? -1 : (size ?? 0) }
+    var sortDate: Date { modified ?? .distantPast }
     let url: URL
     let isDirectory: Bool
     let size: Int64?
@@ -38,29 +41,53 @@ struct FileItem: Identifiable, Hashable {
         }
     }
 
-    /// 하위 폴더까지 이름으로 찾는다 (대소문자·한글 자모 조합 차이 무시). 백그라운드에서 부른다.
-    static func search(_ query: String, in root: URL, includeHidden: Bool, alwaysHidden: Set<String>,
-                       limit: Int = 1000) -> [FileItem] {
+    struct SearchResult: Sendable {
+        var items: [FileItem]
+        /// 결과가 너무 많거나 훑을 폴더가 너무 많아서 중간에 멈췄다
+        var partial: Bool
+    }
+
+    static let searchResultLimit = 1000
+    /// 한 번 검색에서 훑는 폴더 수와 깊이 한도 (홈·Macintosh HD에서 디스크 전체를 훑지 않도록)
+    static let searchFolderLimit = 10_000
+    static let searchDepthLimit = 12
+
+    /// 하위 폴더까지 이름으로 찾는다 (대소문자·한글 자모 조합 차이 무시).
+    /// 뒤에서 돌고, 부른 쪽 작업이 취소되면(검색어가 바뀌면) 바로 멈춘다.
+    static func search(_ query: String, in root: URL, includeHidden: Bool, alwaysHidden: Set<String>) async -> SearchResult {
+        let task = Task.detached(priority: .userInitiated) {
+            searchNow(query, in: root, includeHidden: includeHidden, alwaysHidden: alwaysHidden)
+        }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
+    private static func searchNow(_ query: String, in root: URL, includeHidden: Bool, alwaysHidden: Set<String>) -> SearchResult {
         let needle = query.trimmed
-        guard !needle.isEmpty else { return [] }
+        guard !needle.isEmpty else { return SearchResult(items: [], partial: false) }
         let rootPath = root.standardizedFileURL.path
         var results: [FileItem] = []
-        var queue: [URL] = [root]
-        while !queue.isEmpty, results.count < limit {
-            if Task.isCancelled { return results }
-            let dir = queue.removeFirst()
+        var queue: [(url: URL, depth: Int)] = [(root, 0)]
+        var next = 0
+        var partial = false
+        while next < queue.count {
+            if Task.isCancelled { return SearchResult(items: results, partial: true) }
+            if results.count >= searchResultLimit || next >= searchFolderLimit { partial = true; break }
+            let (dir, depth) = queue[next]
+            next += 1
             for item in list(in: dir, includeHidden: includeHidden, alwaysHidden: alwaysHidden) {
                 if item.name.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]) != nil {
                     var found = item
                     let parent = item.url.deletingLastPathComponent().standardizedFileURL.path
                     found.location = parent == rootPath ? "" : String(parent.dropFirst(rootPath.count + 1))
                     results.append(found)
-                    if results.count >= limit { break }
+                    if results.count >= searchResultLimit { break }
                 }
-                if item.isDirectory { queue.append(item.url) }
+                if item.isDirectory {
+                    if depth + 1 <= searchDepthLimit { queue.append((item.url, depth + 1)) } else { partial = true }
+                }
             }
         }
-        return results
+        return SearchResult(items: results, partial: partial)
     }
 
     /// 폴더 트리용: 하위 폴더만

@@ -24,7 +24,13 @@ fi
 
 ./scripts/build-app.sh
 
+# 업데이트 서명: 앱이 Info.plist의 공개 키로 확인한다
+dmg="build/Gitty-$version.dmg"
+swift scripts/update-signing.swift sign "$dmg" > "$dmg.sig"
+public_key=$(/usr/libexec/PlistBuddy -c "Print GittyUpdatePublicKey" Resources/Info.plist)
+swift scripts/update-signing.swift verify "$dmg" "$dmg.sig" "$public_key"
+
 git tag -a "$tag" -m "Gitty $version"
 git push origin "$tag"
-gh release create "$tag" "build/Gitty-$version.dmg" --title "Gitty $version" --notes-file "$notes"
+gh release create "$tag" "$dmg" "$dmg.sig" --title "Gitty $version" --notes-file "$notes"
 echo "릴리스를 만들었어요: $tag"

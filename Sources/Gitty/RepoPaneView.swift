@@ -9,12 +9,14 @@ struct RepoPaneView: View {
     @State private var selection = Set<URL>()
     @State private var nameRequest: NameRequest?
     @State private var deleting: [FileItem] = []
+    @State private var historyItem: FileItem?
     @State private var pending: PendingTransfer?
     @State private var dropTarget: DropTarget = .none
     @State private var treeDropTarget: DropTarget = .none
     @State private var query = ""
     @State private var results: [FileItem]?
     @State private var searching = false
+    @State private var partial = false
     @AppStorage("showRepoTree") private var showTree = true
 
     private var shownItems: [FileItem] { results ?? model.items }
@@ -67,6 +69,7 @@ struct RepoPaneView: View {
         }
         .task(id: SearchKey(query: query, dir: model.relativeDir, revision: model.revision)) { await search() }
         .sheet(item: $nameRequest) { NameSheet(request: $0) }
+        .sheet(item: $historyItem) { HistorySheet(item: $0) }
         .confirmationDialog(deleteTitle,
                             isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } })) {
             Button("삭제", role: .destructive) {
@@ -111,7 +114,7 @@ struct RepoPaneView: View {
         FileTable(pane: Self.paneName,
                   items: shownItems,
                   selection: $selection,
-                  emptyTitle: results == nil ? "빈 폴더입니다" : (searching ? "찾는 중…" : "검색 결과가 없어요"),
+                  emptyTitle: results == nil ? (model.loading ? "불러오는 중…" : "빈 폴더입니다") : (searching ? "찾는 중…" : "검색 결과가 없어요"),
                   emptyHint: results == nil ? "왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드됩니다" : "하위 폴더까지 이름으로 찾아요",
                   onOpen: open,
                   onDelete: { deleting = $0 }) { items in
@@ -121,6 +124,9 @@ struct RepoPaneView: View {
             } else {
                 Button("열기") { items.forEach(open) }
                 Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
+                if items.count == 1, !items[0].isDirectory {
+                    Button("변경 기록…") { historyItem = items[0] }
+                }
                 if items.count == 1, items[0].isDirectory {
                     if model.repoFavorites.isFavorite(items[0].url) {
                         Button("즐겨찾기에서 제거") { model.repoFavorites.remove(items[0].url) }
@@ -142,7 +148,7 @@ struct RepoPaneView: View {
             if let results, !query.isEmpty {
                 HStack(spacing: 6) {
                     if searching { ProgressView().controlSize(.mini) }
-                    Text(searching ? "찾는 중…" : "‘\(query)’ \(results.count >= 1000 ? "1000개 이상" : "\(results.count)개") · 하위 폴더 포함")
+                    Text(searching ? "찾는 중…" : "‘\(query)’ \(results.count)개\(partial ? " · 일부만 찾았어요 (더 좁은 폴더에서 찾아 보세요)" : " · 하위 폴더 포함")")
                 }
                 .font(.caption)
                 .padding(.horizontal, 10)
@@ -195,11 +201,10 @@ struct RepoPaneView: View {
         guard !Task.isCancelled else { return }
         searching = true
         if results == nil { results = [] }
-        let found = await Task.detached(priority: .userInitiated) {
-            FileItem.search(text, in: dir, includeHidden: true, alwaysHidden: AppModel.repoHidden)
-        }.value
+        let found = await FileItem.search(text, in: dir, includeHidden: true, alwaysHidden: AppModel.repoHidden)
         guard !Task.isCancelled else { return }
-        results = found
+        results = found.items
+        partial = found.partial
         searching = false
     }
 

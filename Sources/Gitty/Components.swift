@@ -14,9 +14,18 @@ struct FileTable<MenuContent: View>: View {
     let onDelete: ([FileItem]) -> Void
     @ViewBuilder let menu: ([FileItem]) -> MenuContent
 
+    /// 열 제목을 눌러 정렬. 폴더는 늘 위에.
+    @State private var sortOrder = [KeyPathComparator(\FileItem.name, comparator: .localizedStandard)]
+
+    private var sorted: [FileItem] {
+        let ordered = items.sorted(using: sortOrder)
+        return ordered.filter(\.isDirectory) + ordered.filter { !$0.isDirectory }
+    }
+
     var body: some View {
-        Table(of: FileItem.self, selection: $selection) {
-            TableColumn("이름") { item in
+        let rows = sorted
+        Table(of: FileItem.self, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("이름", value: \.name, comparator: .localizedStandard) { item in
                 HStack(spacing: 6) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
                         .resizable()
@@ -33,19 +42,19 @@ struct FileTable<MenuContent: View>: View {
                 .background { if item.isDirectory { DropFolderMarker(url: item.url) } }
             }
             .width(min: 140, ideal: 280)
-            TableColumn("크기") { item in
+            TableColumn("크기", value: \.sortSize) { item in
                 Text(item.isDirectory ? "—" : ByteCountFormatter.string(fromByteCount: item.size ?? 0, countStyle: .file))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             .width(min: 50, ideal: 70, max: 110)
-            TableColumn("수정한 날짜") { item in
+            TableColumn("수정한 날짜", value: \.sortDate) { item in
                 Text(item.modified?.formatted(date: .numeric, time: .shortened) ?? "")
                     .foregroundStyle(.secondary)
             }
             .width(min: 90, ideal: 130, max: 200)
         } rows: {
-            ForEach(items) { item in
+            ForEach(rows) { item in
                 // 다른 패널이나 Finder로 끌어다 놓을 수 있도록
                 TableRow(item).itemProvider {
                     DragSession.note(pane: pane, url: item.url)

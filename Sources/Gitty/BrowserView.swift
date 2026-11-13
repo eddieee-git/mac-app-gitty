@@ -79,9 +79,14 @@ struct BrowserView: View {
                     Text(model.progress?.phase ?? busy)
                 }
             } else {
-                Image(systemName: model.unpushed > 0 ? "exclamationmark.icloud" : "checkmark.icloud")
-                    .foregroundStyle(model.unpushed > 0 ? .orange : .green)
-                Text(model.statusMessage)
+                if model.pushPending {
+                    Image(systemName: "icloud.and.arrow.up").foregroundStyle(.secondary)
+                    Text(model.statusMessage + " · 곧 GitHub에 올려요")
+                } else {
+                    Image(systemName: model.unpushed > 0 ? "exclamationmark.icloud" : "checkmark.icloud")
+                        .foregroundStyle(model.unpushed > 0 ? .orange : .green)
+                    Text(model.statusMessage)
+                }
             }
             Spacer()
             if let synced = model.lastSynced, !model.isBusy {
@@ -89,7 +94,12 @@ struct BrowserView: View {
                     .foregroundStyle(.secondary)
                     .help("⌘R로 지금 동기화 · 간격은 설정(⌘,)에서")
             }
-            if model.unpushed > 0 && !model.isBusy {
+            if let undo = model.undoLabel, !model.isBusy {
+                Button("되돌리기") { Task { await model.undoLast() } }
+                    .controlSize(.small)
+                    .help("마지막 Git 작업 되돌리기: \(undo) (⌥⌘Z)")
+            }
+            if model.unpushed > 0 && !model.isBusy && !model.pushPending {
                 Text("push 안 된 커밋 \(model.unpushed)개").foregroundStyle(.orange)
                 Button("다시 시도") { Task { await model.refresh() } }
                     .controlSize(.small)

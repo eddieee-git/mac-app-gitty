@@ -16,15 +16,32 @@ enum Log {
         return f
     }()
 
+    /// 기다리는 기록을 파일에 다 쓴다 (앱 종료 직전)
+    static func flush() { queue.sync {} }
+
     static func info(_ category: String, _ message: String) { write("INFO", category, message) }
     static func error(_ category: String, _ message: String) { write("ERROR", category, message) }
 
     private static let homePath = FileManager.default.homeDirectoryForCurrentUser.path
 
+    /// 원격 주소에 들어 있는 인증 정보(https://사용자:토큰@…)와 GitHub 토큰을 가린다.
+    static func redact(_ text: String) -> String {
+        var s = text
+        for (pattern, template) in redactions {
+            s = pattern.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+        }
+        return s
+    }
+
+    private static let redactions: [(NSRegularExpression, String)] = [
+        (try! NSRegularExpression(pattern: #"(https?://)[^/\s@]+@"#), "$1***@"),
+        (try! NSRegularExpression(pattern: #"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"#), "***"),
+    ]
+
     private static func write(_ level: String, _ category: String, _ message: String) {
         let date = Date()
-        // 홈 폴더 경로는 ~로 줄여서 읽기 쉽게
-        let message = message.replacingOccurrences(of: homePath + "/", with: "~/")
+        // 홈 폴더 경로는 ~로 줄여서 읽기 쉽게, 토큰은 가려서
+        let message = redact(message).replacingOccurrences(of: homePath + "/", with: "~/")
         queue.async {
             let stamp = formatter.string(from: date)
             // 여러 줄 메시지는 들여써서 한 항목으로 보이게

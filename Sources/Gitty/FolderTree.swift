@@ -25,11 +25,11 @@ struct FolderTree: View {
     var rootsTitle: String?
 
     @State private var expanded: Set<String> = []
+    @State private var children = FolderChildren()
 
     private var currentPath: String { current.standardizedFileURL.path }
 
     var body: some View {
-        let _ = revision
         List(selection: Binding<String?>(
             get: { currentPath },
             set: { path in
@@ -64,11 +64,14 @@ struct FolderTree: View {
         .listStyle(.sidebar)
         .onAppear(perform: expandToCurrent)
         .onChange(of: currentPath) { expandToCurrent() }
+        .onChange(of: revision) { children.invalidate() }
+        .onChange(of: includeHidden) { children.invalidate() }
     }
 
     private func node(_ url: URL, title: String? = nil, icon: String = "folder") -> AnyView {
         let path = url.standardizedFileURL.path
-        let children = FileItem.subfolders(of: url, includeHidden: includeHidden, alwaysHidden: alwaysHidden)
+        // 하위 폴더는 뒤에서 읽어 둔다. 아직 모르면(nil) 펼침 단추 없이 보여 주고, 읽히면 다시 그린다.
+        let children = self.children.children(of: url, includeHidden: includeHidden, alwaysHidden: alwaysHidden) ?? []
         let label = Label(title ?? url.lastPathComponent, systemImage: path == currentPath ? "folder.fill" : icon)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -130,4 +133,42 @@ struct FavoriteActions {
     let move: (IndexSet, Int) -> Void
     let resetLabel: String
     let reset: () -> Void
+}
+
+/// 트리의 하위 폴더 목록을 뒤에서 읽어 기억해 둔다.
+/// 화면을 그릴 때마다 디스크(특히 Google Drive·네트워크 폴더)를 읽으면 앱이 멈추기 때문.
+@MainActor
+@Observable
+final class FolderChildren {
+    private var cache: [String: [URL]] = [:]
+    /// 최신 상태로 읽은 폴더. invalidate 후에는 비고, 이전 값을 보여 주면서 다시 읽는다.
+    @ObservationIgnored private var fresh: Set<String> = []
+    @ObservationIgnored private var loading: Set<String> = []
+    @ObservationIgnored private var generation = 0
+
+    func children(of url: URL, includeHidden: Bool, alwaysHidden: Set<String>) -> [URL]? {
+        let key = url.standardizedFileURL.path
+        if !fresh.contains(key), !loading.contains(key) {
+            loading.insert(key)
+            let gen = generation
+            Task {
+                let list = await Task.detached(priority: .userInitiated) {
+                    FileItem.subfolders(of: url, includeHidden: includeHidden, alwaysHidden: alwaysHidden)
+                }.value
+                loading.remove(key)
+                if gen == generation { fresh.insert(key) }
+                if cache[key] != list { cache[key] = list }
+            }
+        }
+        return cache[key]
+    }
+
+    /// 폴더가 바뀌었을 수 있으니 다음에 그릴 때 다시 읽는다 (그동안은 이전 값을 보여 준다)
+    func invalidate() {
+        generation += 1
+        fresh = []
+        loading = []
+        // 이미 그려진 노드들이 다시 읽도록 한 번 알린다
+        cache = cache
+    }
 }

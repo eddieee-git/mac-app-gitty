@@ -7,7 +7,7 @@ struct CommandResult {
 
     var errorText: String {
         let text = stderr.isEmpty ? stdout : stderr
-        return text.trimmed
+        return Log.redact(text.trimmed)   // 오류 창에도 토큰이 보이지 않게
     }
 }
 
@@ -28,7 +28,8 @@ enum Shell {
         .first { FileManager.default.isExecutableFile(atPath: $0) }
 
     /// onStderrLine: stderr를 줄 단위(\r, \n 기준)로 바로바로 넘겨 받는다. git 진행률 표시용.
-    static func run(_ executable: String, _ args: [String], cwd: URL? = nil,
+    /// stdoutTo: stdout을 이 파일에 그대로 쓴다 (사진 같은 바이너리 내용용). 이때 결과의 stdout은 비어 있다.
+    static func run(_ executable: String, _ args: [String], cwd: URL? = nil, stdoutTo: URL? = nil,
                     onStderrLine: (@Sendable (String) -> Void)? = nil) async -> CommandResult {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -45,7 +46,12 @@ enum Shell {
                 process.environment = env
 
                 let outPipe = Pipe(), errPipe = Pipe()
-                process.standardOutput = outPipe
+                var outFile: FileHandle?
+                if let stdoutTo {
+                    FileManager.default.createFile(atPath: stdoutTo.path, contents: nil)
+                    outFile = try? FileHandle(forWritingTo: stdoutTo)
+                }
+                process.standardOutput = outFile ?? outPipe
                 process.standardError = errPipe
                 process.standardInput = FileHandle.nullDevice
 
@@ -80,9 +86,10 @@ enum Shell {
                     }
                     group.leave()
                 }
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                let outData = outFile == nil ? outPipe.fileHandleForReading.readDataToEndOfFile() : Data()
                 group.wait()
                 process.waitUntilExit()
+                try? outFile?.close()
 
                 cont.resume(returning: CommandResult(
                     status: process.terminationStatus,

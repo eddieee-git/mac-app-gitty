@@ -6,6 +6,7 @@ struct WelcomeView: View {
     @State private var showClone = false
     @State private var selectedRecent: URL?
     @State private var opening: URL?
+    @State private var setup: SetupStatus?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -16,6 +17,10 @@ struct WelcomeView: View {
                 Text("Gitty").font(.largeTitle.bold())
                 Text("Git 저장소를 파일 관리자처럼 다루세요")
                     .foregroundStyle(.secondary)
+            }
+
+            if let setup, !setup.ready {
+                SetupCard(status: setup) { Task { await checkSetup() } }
             }
 
             HStack(spacing: 12) {
@@ -87,6 +92,15 @@ struct WelcomeView: View {
         .sheet(isPresented: $showClone) {
             CloneSheet()
         }
+        .task { await checkSetup() }
+        // 터미널에서 설치·로그인하고 돌아오면 다시 확인
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if setup?.ready == false { Task { await checkSetup() } }
+        }
+    }
+
+    private func checkSetup() async {
+        setup = await SetupStatus.check()
     }
 
     private func openRecent(_ url: URL) {
