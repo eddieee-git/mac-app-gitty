@@ -143,46 +143,52 @@ final class Places {
     /// - 미러링: 사용자가 고른 폴더 (기본 ~/My Drive). 이때 CloudStorage에는 공유 드라이브만 남는다.
     static func googleMyDrives(extra: [URL] = [], home: URL = Places.home) -> [(url: URL, title: String)] {
         let fm = FileManager.default
-        var found: [(URL, String)] = []
+        func real(_ u: URL) -> URL { u.resolvingSymlinksInPath().standardizedFileURL }
         func isDir(_ u: URL) -> Bool {
             var d: ObjCBool = false
-            return fm.fileExists(atPath: u.resolvingSymlinksInPath().path, isDirectory: &d) && d.boolValue
+            return fm.fileExists(atPath: real(u).path, isDirectory: &d) && d.boolValue
         }
         func isMyDrive(_ u: URL) -> Bool {
             myDriveNames.contains(u.lastPathComponent) || myDriveNames.contains(fm.displayName(atPath: u.path))
         }
         func hasVisibleItems(_ u: URL) -> Bool {
-            ((try? fm.contentsOfDirectory(atPath: u.path)) ?? []).contains { !$0.hasPrefix(".") && $0 != "Icon\r" }
+            ((try? fm.contentsOfDirectory(atPath: real(u).path)) ?? []).contains { !$0.hasPrefix(".") && $0 != "Icon\r" }
         }
-        var streaming: [(URL, String)] = []
+        func email(of account: URL) -> String? {
+            account.lastPathComponent.split(separator: "-", maxSplits: 1).dropFirst().first.map(String.init)
+        }
+
         let cloudDir = home.appendingPathComponent("Library/CloudStorage", isDirectory: true)
         let accounts = ((try? fm.contentsOfDirectory(at: cloudDir, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.lowercased().hasPrefix("googledrive") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let accountPaths = Set(accounts.map { real($0).path })
+
+        // 계정 폴더 안의 내 드라이브. 미러링이면 이것이 ~/My Drive를 가리키는 바로가기다.
+        var streaming: [(URL, String)] = []
         for account in accounts {
-            let email = account.lastPathComponent.split(separator: "-", maxSplits: 1).dropFirst().first.map(String.init)
             let children = (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? []
             for child in children where isMyDrive(child) && isDir(child) {
-                streaming.append((child, email.map { "내 드라이브 (\($0))" } ?? "내 드라이브"))
+                streaming.append((real(child), email(of: account).map { "내 드라이브 (\($0))" } ?? "내 드라이브"))
             }
         }
-        // 미러링: 홈 바로 아래(기본 위치)와 Spotlight로 찾은 곳. 실제 파일은 여기 있다.
+        // 미러링: 홈 바로 아래(기본 위치)와 Spotlight로 찾은 곳
         var mirrored: [(URL, String)] = []
         let homeCandidates = ["My Drive", "내 드라이브", "Google Drive"].map { home.appendingPathComponent($0, isDirectory: true) }
         for url in homeCandidates + extra where isDir(url) {
-            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
-            if (streaming + mirrored).contains(where: { $0.0.resolvingSymlinksInPath().standardizedFileURL.path == path }) { continue }
-            mirrored.append((url, "내 드라이브"))
+            let path = real(url).path
+            if accountPaths.contains(path) { continue }   // ~/Google Drive → 계정 폴더 바로가기는 내 드라이브가 아님
+            if (streaming + mirrored).contains(where: { $0.0.path == path }) { continue }
+            mirrored.append((real(url), "내 드라이브"))
         }
-        // 미러링을 쓰면 CloudStorage 쪽 내 드라이브는 거의 비어 있다 → 비어 있으면 빼고 미러링 폴더를 보여 준다
+        // 미러링인데 CloudStorage 쪽이 진짜 빈 폴더면 빼고, 계정 이름은 미러링 폴더에 붙인다
         if !mirrored.isEmpty {
             streaming.removeAll { !hasVisibleItems($0.0) }
-            if streaming.isEmpty, mirrored.count == 1, let account = accounts.first,
-               let email = account.lastPathComponent.split(separator: "-", maxSplits: 1).dropFirst().first {
-                mirrored[0].1 = "내 드라이브 (\(email))"
+            if streaming.isEmpty, mirrored.count == 1, accounts.count == 1, let mail = email(of: accounts[0]) {
+                mirrored[0].1 = "내 드라이브 (\(mail))"
             }
         }
-        return mirrored + streaming
+        return streaming + mirrored
     }
 
     /// 미러링 폴더를 홈 밖이나 깊은 곳에 둔 경우를 위해 Spotlight로 한 번 찾아본다 (뒤에서)
@@ -206,13 +212,13 @@ final class Places {
         var added = Set(UserDefaults.standard.stringArray(forKey: Self.addedKey) ?? [])
         var changed = false
         let current = Set(urls.map(\.path))
-        for path in added where !current.contains(path) && path.contains("/Library/CloudStorage/")
-            && FileManager.default.fileExists(atPath: path) && !urls.isEmpty {
+        // 예전 버전이 자동으로 넣었지만 지금 찾은 내 드라이브가 아닌 것(바로가기·빈 폴더)은 뺀다
+        for path in added where !current.contains(path) && !urls.isEmpty {
             let url = URL(fileURLWithPath: path, isDirectory: true)
             if isFavorite(url) {
                 favorites.removeAll { $0.standardizedFileURL.path == url.standardizedFileURL.path }
                 changed = true
-                Log.info("app", "비어 있는 CloudStorage 내 드라이브를 즐겨찾기에서 뺌 (미러링 폴더를 대신 씀): \(path)")
+                Log.info("app", "예전에 자동으로 넣은 즐겨찾기를 뺌 (실제 내 드라이브를 대신 씀): \(path)")
             }
         }
         for url in urls where !added.contains(url.path) {

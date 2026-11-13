@@ -22,6 +22,8 @@ struct FileItem: Identifiable, Hashable {
     /// includeHidden이 false면 점(.)으로 시작하거나 Finder에서 숨긴 항목(~/Library 등)을 뺀다.
     /// alwaysHidden은 설정과 상관없이 늘 뺀다 (.git, .DS_Store 등).
     static func list(in dir: URL, includeHidden: Bool, alwaysHidden: Set<String>) -> [FileItem] {
+        // 폴더 자체가 바로가기(심볼릭 링크)면 URL로 읽을 때 "Not a directory"로 실패한다 → 실제 폴더를 읽는다
+        let dir = dir.resolvingSymlinksInPath()
         let urls = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
         return urls.compactMap { url -> FileItem? in
             let name = url.lastPathComponent

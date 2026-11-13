@@ -79,7 +79,14 @@ final class LocalBrowser {
                 return (target, list, failure)
             }.value
             guard token == loadToken else { return }   // 그사이 다른 폴더로 갔음
-            if existing != dir { self.dir = existing; return }   // 폴더가 사라짐: didSet이 상위 폴더를 다시 읽는다
+            if existing != dir { self.dir = existing; return }
+            // 바로가기 폴더(Google Drive의 My Drive 등)는 실제 폴더로 옮겨서 경로 표시와 작업이 맞게
+            let real = dir.resolvingSymlinksInPath()
+            if real.standardizedFileURL.path != dir.standardizedFileURL.path {
+                Log.info("local", "바로가기 폴더라 실제 위치로 이동: \(dir.path) → \(real.path)")
+                self.dir = real
+                return
+            }   // 폴더가 사라짐: didSet이 상위 폴더를 다시 읽는다
             items = list
             loadError = error
             loading = false
