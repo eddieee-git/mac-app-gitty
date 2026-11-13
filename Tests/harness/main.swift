@@ -70,6 +70,30 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     check(FileOps.validateName("a/b") == nil && FileOps.validateName("..") == nil && FileOps.validateName("") == nil, "/, .., 빈 이름 거부")
     check(Places.cloudName("GoogleDrive-me@gmail.com") == "Google Drive (me@gmail.com)", "Google Drive 이름")
 
+    section("Google Drive 내 드라이브 찾기")
+    let fm = FileManager.default
+    let streaming = work.appendingPathComponent("home-stream")
+    for d in ["Library/CloudStorage/GoogleDrive-me@gmail.com/My Drive/문서", "Library/CloudStorage/GoogleDrive-me@gmail.com/Shared drives/팀"] {
+        try! fm.createDirectory(at: streaming.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    let s1 = Places.googleMyDrives(home: streaming)
+    check(s1.map(\.title) == ["내 드라이브 (me@gmail.com)"] && s1.first?.url.lastPathComponent == "My Drive", "스트리밍: 계정 폴더 안의 내 드라이브")
+    let mirror = work.appendingPathComponent("home-mirror")
+    for d in ["Library/CloudStorage/GoogleDrive-me@gmail.com/Shared drives/팀", "My Drive/문서"] {
+        try! fm.createDirectory(at: mirror.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    let s2 = Places.googleMyDrives(home: mirror)
+    check(s2.map(\.url.lastPathComponent) == ["My Drive"] && s2.first?.url.path.hasPrefix(mirror.path) == true, "미러링: 홈의 My Drive")
+    let elsewhere = work.appendingPathComponent("elsewhere/내 드라이브")
+    try! fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+    check(Places.googleMyDrives(extra: [elsewhere], home: mirror).count == 2, "Spotlight로 찾은 다른 곳의 내 드라이브")
+    let linkHome = work.appendingPathComponent("home-link")
+    try! fm.createDirectory(at: linkHome, withIntermediateDirectories: true)
+    try! fm.createSymbolicLink(at: linkHome.appendingPathComponent("Google Drive"), withDestinationURL: mirror.appendingPathComponent("My Drive"))
+    let listed = FileItem.list(in: linkHome, includeHidden: false, alwaysHidden: [])
+    check(listed.first?.isDirectory == true, "폴더를 가리키는 링크는 폴더로")
+    check(Places.cloudName("GoogleDrive-me@gmail.com") == "Google Drive (me@gmail.com)", "계정 폴더 이름")
+
     section("Git 작업 (로컬 원격으로)")
     let remote = work.appendingPathComponent("remote.git")
     let clone = work.appendingPathComponent("clone")

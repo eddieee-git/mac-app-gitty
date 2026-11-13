@@ -15,7 +15,7 @@ struct FileItem: Identifiable, Hashable {
     var name: String { url.lastPathComponent }
 
     private static let keys: [URLResourceKey] = [
-        .isDirectoryKey, .isPackageKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey,
+        .isDirectoryKey, .isPackageKey, .isHiddenKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey,
     ]
 
     /// 폴더 내용을 폴더 먼저, 이름순으로 정렬해 돌려준다.
@@ -29,7 +29,12 @@ struct FileItem: Identifiable, Hashable {
             let v = try? url.resourceValues(forKeys: Set(keys))
             if !includeHidden && (name.hasPrefix(".") || v?.isHidden == true) { return nil }
             // .app 같은 패키지는 Finder처럼 파일 하나로 다룬다
-            let isFolder = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
+            var isFolder = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
+            // 폴더를 가리키는 심볼릭 링크(Google Drive 등)도 폴더로
+            if v?.isSymbolicLink == true {
+                var dir: ObjCBool = false
+                isFolder = FileManager.default.fileExists(atPath: url.resolvingSymlinksInPath().path, isDirectory: &dir) && dir.boolValue
+            }
             return FileItem(url: url,
                             isDirectory: isFolder,
                             size: v?.fileSize.map(Int64.init),
