@@ -35,24 +35,24 @@ struct SetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("시작하기 전에 준비할 것이 있어요", systemImage: "wrench.and.screwdriver")
+            Label(tr("시작하기 전에 준비할 것이 있어요"), systemImage: "wrench.and.screwdriver")
                 .font(.headline)
             row(ok: status.git, title: "git (Command Line Tools)",
-                hint: "터미널에서 실행한 뒤 나오는 창에서 설치를 누르세요.", command: "xcode-select --install")
+                hint: tr("터미널에서 실행한 뒤 나오는 창에서 설치를 누르세요."), command: "xcode-select --install")
             row(ok: status.gh, title: "GitHub CLI",
-                hint: "Homebrew로 설치해요.", command: "brew install gh")
+                hint: tr("Homebrew로 설치해요."), command: "brew install gh")
             if status.gh {
-                row(ok: status.ghLoggedIn, title: "GitHub 로그인",
-                    hint: "터미널에서 실행하고 안내대로 브라우저에서 로그인하세요.", command: "gh auth login")
+                row(ok: status.ghLoggedIn, title: tr("GitHub 로그인"),
+                    hint: tr("터미널에서 실행하고 안내대로 브라우저에서 로그인하세요."), command: "gh auth login")
             }
-            row(ok: status.lfs, title: "Git LFS (선택)",
-                hint: "100MB가 넘는 파일을 올릴 때만 필요해요.", command: "brew install git-lfs", optional: true)
+            row(ok: status.lfs, title: tr("Git LFS (선택)"),
+                hint: tr("100MB가 넘는 파일을 올릴 때만 필요해요."), command: "brew install git-lfs", optional: true)
             HStack {
-                Button("터미널 열기") {
+                Button(tr("터미널 열기")) {
                     NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
                 }
                 Spacer()
-                Button("다시 확인", action: recheck)
+                Button(tr("다시 확인"), action: recheck)
             }
         }
         .padding(14)
@@ -65,6 +65,7 @@ struct SetupCard: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: ok ? "checkmark.circle.fill" : (optional ? "minus.circle" : "exclamationmark.circle.fill"))
                 .foregroundStyle(ok ? .green : (optional ? .secondary : .orange))
+                .accessibilityLabel(ok ? tr("준비됨") : (optional ? tr("선택 사항") : tr("필요함")))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).fontWeight(.medium)
                 if !ok {
@@ -75,8 +76,9 @@ struct SetupCard: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(command, forType: .string)
                         } label: { Image(systemName: "doc.on.doc") }
+                            .accessibilityLabel(tr("명령 복사"))
                             .buttonStyle(.borderless)
-                            .help("명령 복사")
+                            .help(tr("명령 복사"))
                     }
                 }
             }

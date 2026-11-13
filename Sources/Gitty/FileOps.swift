@@ -114,13 +114,19 @@ enum FileOps {
             let srcPath = src.standardizedFileURL.path
             if (srcPath as NSString).deletingLastPathComponent == dirPath { continue }   // 이미 같은 폴더
             if (dirPath + "/").hasPrefix(srcPath + "/") {
-                throw GittyError(message: "폴더를 자기 자신 안으로 복사할 수 없습니다: \(src.lastPathComponent)")
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 복사할 수 없습니다: \(src.lastPathComponent)"))
             }
             let dst = dir.appendingPathComponent(src.lastPathComponent)
+            try Cancellation.check()
             if fm.fileExists(atPath: dst.path) {
                 try fm.trashItem(at: dst, resultingItemURL: nil)
             }
-            try copyTree(src, to: dst, progress: progress)
+            do {
+                try copyTree(src, to: dst, progress: progress)
+            } catch {
+                try? fm.removeItem(at: dst)   // 반쯤 복사된 것은 남기지 않는다
+                throw error
+            }
         }
     }
 
@@ -132,7 +138,7 @@ enum FileOps {
             let srcPath = src.standardizedFileURL.path
             if (srcPath as NSString).deletingLastPathComponent == dirPath { continue }
             if (dirPath + "/").hasPrefix(srcPath + "/") {
-                throw GittyError(message: "폴더를 자기 자신 안으로 옮길 수 없습니다: \(src.lastPathComponent)")
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없습니다: \(src.lastPathComponent)"))
             }
             let dst = dir.appendingPathComponent(src.lastPathComponent)
             if fm.fileExists(atPath: dst.path) {
@@ -165,6 +171,7 @@ enum FileOps {
     static func copyFile(_ src: URL, to dst: URL, progress: ((Int64) -> Void)?) throws {
         let fm = FileManager.default
         let size = Int64((try? src.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        try Cancellation.check()
         guard let progress, size >= 8 * 1024 * 1024 else {
             try fm.copyItem(at: src, to: dst)
             progress?(size)
@@ -173,11 +180,12 @@ enum FileOps {
         let input = try FileHandle(forReadingFrom: src)
         defer { try? input.close() }
         guard fm.createFile(atPath: dst.path, contents: nil) else {
-            throw GittyError(message: "파일을 만들 수 없습니다: \(dst.path)")
+            throw GittyError(message: tr("파일을 만들 수 없습니다: \(dst.path)"))
         }
         let output = try FileHandle(forWritingTo: dst)
         do {
             while let chunk = try input.read(upToCount: 4 * 1024 * 1024), !chunk.isEmpty {
+                try Cancellation.check()
                 try output.write(contentsOf: chunk)
                 progress(Int64(chunk.count))
             }
@@ -226,7 +234,7 @@ enum FileOps {
             try fm.moveItem(at: tmp, to: dst)
         } else {
             guard !fm.fileExists(atPath: dst.path) else {
-                throw GittyError(message: "같은 이름의 항목이 이미 있습니다: \(newName)")
+                throw GittyError(message: tr("같은 이름의 항목이 이미 있습니다: \(newName)"))
             }
             try fm.moveItem(at: url, to: dst)
         }

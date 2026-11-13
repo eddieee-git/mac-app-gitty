@@ -44,6 +44,10 @@ enum Shell {
                 env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
                 env["GIT_TERMINAL_PROMPT"] = "0"   // 인증 프롬프트로 멈추지 않도록
                 env["GIT_LFS_FORCE_PROGRESS"] = "1" // 파이프로 받아도 LFS 진행률을 출력하게
+                // 큰 파일을 필요할 때 받기: pull·checkout 때는 포인터만 두고, git lfs 명령으로 직접 받을 때만 내용을 받는다
+                if UserDefaults.standard.bool(forKey: "lfsOnDemand"), !args.contains("lfs") {
+                    env["GIT_LFS_SKIP_SMUDGE"] = "1"
+                }
                 process.environment = env
 
                 let outPipe = Pipe(), errPipe = Pipe()
@@ -58,6 +62,7 @@ enum Shell {
 
                 do {
                     try process.run()
+                    Cancellation.track(process)
                 } catch {
                     cont.resume(returning: CommandResult(status: -1, stdout: "", stderr: error.localizedDescription))
                     return
@@ -90,6 +95,7 @@ enum Shell {
                 let outData = outFile == nil ? outPipe.fileHandleForReading.readDataToEndOfFile() : Data()
                 group.wait()
                 process.waitUntilExit()
+                Cancellation.untrack(process)
                 try? outFile?.close()
 
                 cont.resume(returning: CommandResult(

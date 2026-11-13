@@ -37,7 +37,7 @@ struct FolderTree: View {
             })
         ) {
             if !favorites.isEmpty {
-                Section("즐겨찾기") {
+                Section(tr("즐겨찾기")) {
                     ForEach(favorites) { root in
                         Label(root.title, systemImage: root.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,7 +46,7 @@ struct FolderTree: View {
                             .tag(root.id)
                             .contextMenu {
                                 if let actions = favoriteActions {
-                                    Button("즐겨찾기에서 제거") { actions.remove(root.url) }
+                                    Button(tr("즐겨찾기에서 제거")) { actions.remove(root.url) }
                                     Divider()
                                     Button(actions.resetLabel) { actions.reset() }
                                 }
@@ -55,7 +55,7 @@ struct FolderTree: View {
                     .onMove { from, to in favoriteActions?.move(from, to) }
                 }
             }
-            Section(rootsTitle ?? (favorites.isEmpty ? "폴더" : "위치")) {
+            Section(rootsTitle ?? (favorites.isEmpty ? tr("폴더") : tr("위치"))) {
                 ForEach(roots) { root in
                     node(root.url, title: root.title, icon: root.icon)
                 }
@@ -82,9 +82,9 @@ struct FolderTree: View {
             .contextMenu {
                 if let actions = favoriteActions {
                     if actions.isFavorite(url) {
-                        Button("즐겨찾기에서 제거") { actions.remove(url) }
+                        Button(tr("즐겨찾기에서 제거")) { actions.remove(url) }
                     } else {
-                        Button("즐겨찾기에 추가") { actions.add(url) }
+                        Button(tr("즐겨찾기에 추가")) { actions.add(url) }
                     }
                 }
             }

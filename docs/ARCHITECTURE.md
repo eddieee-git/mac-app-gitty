@@ -53,6 +53,16 @@ rebase가 충돌하면 취소하고 `merge --no-ff`로 다시 합친다. 그래�
 | `HistoryView.swift` | 변경 기록 창, Git 메뉴(되돌리기) |
 | `ConflictView.swift` | 충돌 정리 판 |
 | `QuickLook.swift` | 스페이스바 미리 보기 |
+| `TransferBar.swift` | 가운데 복사(▶ ◀)·폴더 맞추기 단추 |
+| `FolderSync.swift` / `SyncView.swift` | 두 폴더 비교와 맞추기 |
+| `FileStatus.swift` | Git 쪽 파일 상태 표시 |
+| `FileGrid.swift` | 아이콘(미리보기) 보기 |
+| `FolderWatcher.swift` | 보고 있는 폴더가 바뀌면 다시 읽기 |
+| `Cancellation.swift` | 작업 취소 (복사는 4MB마다 확인, git은 명령을 끊음) |
+| `UploadSafety.swift` | 비밀 정보일 수 있는 파일 찾기 |
+| `SplitAutosave.swift` | 칸 나눔 위치 기억 |
+| `IconCache.swift` | 파일 아이콘 기억 |
+| `Localization.swift` | 화면 글자 번역 `tr("…")` (영어는 `Resources/en.json`) |
 | `SetupCheck.swift` | 첫 실행 안내 (git, gh 로그인, git-lfs) |
 | `Updater.swift` / `UpdateView.swift` | 업데이트 확인·내려받기·서명 확인·설치, 알림 창 |
 | `Log.swift`, `LogPanel.swift`, `LogView.swift` | 작업 기록 파일(토큰 가림), 진행 로그 |
@@ -75,6 +85,17 @@ SwiftUI `.onDrop`은 `Table`(NSTableView) 뒤에 깔려서 놓기를 받지 못�
 4. 기본은 알림 창에서 내려받아 dmg를 열어 준다. 자동 설치를 켜면 앱을 꺼내 두었다가 종료할 때 작은 셸 스크립트가 바꿔 끼운다(실패하면 이전 버전으로 되돌림).
 
 서명 키 관리는 README의 "업데이트 서명"을 보세요.
+
+## 화면 글자 번역
+
+화면에 보이는 한국어는 모두 `tr("…")`로 감싼다. 끼워 넣은 값은 키에서 `{}`가 된다(`tr("‘\(name)’ 폴더를 만들었습니다")` → 키 `‘{}’ 폴더를 만들었습니다`). 영어는 `Resources/en.json`에 있고, 번역이 없으면 한국어 그대로 보인다. 작업 기록(로그)은 번역하지 않는다.
+
+- `python3 scripts/l10n.py keys`: 빠진 번역을 알려 준다 (빠지면 실패).
+- `python3 scripts/l10n.py wrap`: 새로 쓴 한국어 글자를 `tr()`로 감싼다. 파일 이름처럼 번역하면 안 되는 글자는 그 줄(또는 바로 윗줄)에 `// no-tr`.
+
+## 창과 탭
+
+창(탭)마다 `MainWindow`가 자기 `AppModel`을 가진다. 같은 클론을 여러 탭에서 열어도 `GitRepo.shared(for:)`로 actor 하나를 함께 써서 git 작업이 겹치지 않는다. 메뉴 명령은 `FocusedValues.appModel`로 앞에 있는 창의 모델을 쓴다.
 
 ## 시험과 배포
 

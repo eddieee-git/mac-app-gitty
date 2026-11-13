@@ -5,27 +5,27 @@ import Quartz
 @main
 struct GittyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
 
     var body: some Scene {
-        Window("Gitty", id: "main") {
-            ContentView()
-                .environment(model)
+        // 창(탭)마다 저장소를 따로 연다. ⌘T로 새 탭, ⌘N으로 새 창.
+        WindowGroup("Gitty", id: "main") {
+            MainWindow()
         }
         .defaultSize(width: 1320, height: 800)
         .commands {
             UpdateCommands()
-            GitCommands(model: model)
+            TabCommands()
+            GitCommands()
             LogCommands()
         }
 
         // 업데이트 알림은 시트가 아니라 따로 띄운다: 시트가 떠 있으면 macOS가 앱 종료(로그아웃·재시동 포함)를 막는다
-        Window("Gitty 업데이트", id: "update") {
+        Window(tr("Gitty 업데이트"), id: "update") {
             UpdateWindow()
         }
         .windowResizability(.contentSize)
 
-        Window("Gitty 작업 기록", id: "log") {
+        Window(tr("Gitty 작업 기록"), id: "log") {
             LogView()
         }
         .defaultSize(width: 820, height: 480)
@@ -41,9 +41,9 @@ struct LogCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .help) {
-            Button("작업 기록 보기") { openWindow(id: "log") }
+            Button(tr("작업 기록 보기")) { openWindow(id: "log") }
                 .keyboardShortcut("l", modifiers: [.command, .option])
-            Button("로그 파일 Finder에서 보기") {
+            Button(tr("로그 파일 Finder에서 보기")) {
                 NSWorkspace.shared.activateFileViewerSelecting([Log.fileURL])
             }
         }
@@ -65,11 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 커밋해 두고 아직 올리지 않은 게 있으면 마저 올린 뒤 끝낸다
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = MainActor.assumeIsolated({ AppModel.current }),
-              MainActor.assumeIsolated({ model.pushPending || model.isBusy }) else { return .terminateNow }
-        Log.info("app", "종료 전에 남은 작업을 마치는 중")
+        let waiting = MainActor.assumeIsolated { AppModel.live.filter { $0.pushPending || $0.isBusy } }
+        guard !waiting.isEmpty else { return .terminateNow }
+        Log.info("app", "종료 전에 남은 작업을 마치는 중 (창 \(waiting.count)개)")
         Task { @MainActor in
-            await model.finishPendingWork()
+            for model in waiting { await model.finishPendingWork() }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -93,6 +93,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
 }
 
+/// 창 하나 = 저장소 하나. 창마다 자기 AppModel을 가진다.
+struct MainWindow: View {
+    /// 창이 처음 나타날 때 한 번만 만든다 (@State 초기값은 SwiftUI가 여러 번 계산할 수 있어서)
+    @State private var model: AppModel?
+
+    var body: some View {
+        Group {
+            if let model {
+                ContentView()
+                    .environment(model)
+                    .focusedSceneValue(\.appModel, model)
+            } else {
+                Color.clear.frame(minWidth: 880, minHeight: 520)
+            }
+        }
+        .onAppear { if model == nil { model = AppModel() } }
+        .background(WindowTabbing())
+    }
+}
+
+/// 새 창을 지금 창의 탭으로 붙인다 (Finder처럼)
+private struct WindowTabbing: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            view.window?.tabbingMode = .preferred
+            view.window?.tabbingIdentifier = "gitty.main"
+        }
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+struct TabCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button(tr("새 탭")) { openWindow(id: "main") }
+                .keyboardShortcut("t", modifiers: .command)
+            Button(tr("새 창")) {
+                // 탭으로 붙지 않게 잠시 끄고 연다
+                let previous = NSWindow.allowsAutomaticWindowTabbing
+                NSWindow.allowsAutomaticWindowTabbing = false
+                openWindow(id: "main")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSWindow.allowsAutomaticWindowTabbing = previous }
+            }
+            .keyboardShortcut("n", modifiers: .command)
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var updater = Updater.shared
@@ -111,19 +163,19 @@ struct ContentView: View {
         .onChange(of: updater.offer) {
             if updater.offer != nil { openWindow(id: "update") }
         }
-        .alert("업데이트", isPresented: Binding(
+        .alert(tr("업데이트"), isPresented: Binding(
             get: { updater.notice != nil },
             set: { if !$0 { updater.notice = nil } })
         ) {
-            Button("확인") {}
+            Button(tr("확인")) {}
         } message: {
             Text(updater.notice ?? "")
         }
-        .alert("오류", isPresented: Binding(
+        .alert(tr("오류"), isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } })
         ) {
-            Button("확인") {}
+            Button(tr("확인")) {}
         } message: {
             Text(model.errorMessage ?? "")
         }

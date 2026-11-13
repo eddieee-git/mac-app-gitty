@@ -13,8 +13,8 @@ struct UpdateSheet: View {
                     .resizable()
                     .frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Gitty \(release.version)이 나왔어요").font(.title3.bold())
-                    Text("지금 쓰는 버전은 \(Updater.currentVersion)이에요.").foregroundStyle(.secondary)
+                    Text(tr("Gitty \(release.version)이 나왔어요")).font(.title3.bold())
+                    Text(tr("지금 쓰는 버전은 \(Updater.currentVersion)이에요.")).foregroundStyle(.secondary)
                 }
             }
 
@@ -30,10 +30,10 @@ struct UpdateSheet: View {
             status
 
             HStack {
-                Button("이 버전 건너뛰기") { updater.skip(release) }
-                Link("릴리스 페이지", destination: release.pageURL)
+                Button(tr("이 버전 건너뛰기")) { updater.skip(release) }
+                Link(tr("릴리스 페이지"), destination: release.pageURL)
                 Spacer()
-                Button("나중에") { updater.dismissOffer() }
+                Button(tr("나중에")) { updater.dismissOffer() }
                     .keyboardShortcut(.cancelAction)
                 primaryButton
             }
@@ -45,11 +45,11 @@ struct UpdateSheet: View {
     @ViewBuilder private var status: some View {
         switch updater.phase {
         case .downloading(let value):
-            ProgressView(value: value) { Text("내려받는 중… \(Int(value * 100))%").font(.caption) }
+            ProgressView(value: value) { Text(tr("내려받는 중… \(Int(value * 100))%")).font(.caption) }
         case .preparing:
-            ProgressView { Text("설치 준비 중…").font(.caption) }
+            ProgressView { Text(tr("설치 준비 중…")).font(.caption) }
         case .opened:
-            Text("dmg를 열었어요. Gitty를 종료한 뒤, 열린 창에서 Gitty를 응용 프로그램 폴더로 끌어다 놓아 덮어쓰세요.")
+            Text(tr("dmg를 열었어요. Gitty를 종료한 뒤, 열린 창에서 Gitty를 응용 프로그램 폴더로 끌어다 놓아 덮어쓰세요."))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         case .failed(let message):
@@ -63,15 +63,15 @@ struct UpdateSheet: View {
     @ViewBuilder private var primaryButton: some View {
         switch updater.phase {
         case .opened:
-            Button("Gitty 종료") { NSApp.terminate(nil) }
+            Button(tr("Gitty 종료")) { NSApp.terminate(nil) }
                 .keyboardShortcut(.defaultAction)
         case .staged:
-            Button("다시 시작해서 설치") { updater.restartNow() }
+            Button(tr("다시 시작해서 설치")) { updater.restartNow() }
                 .keyboardShortcut(.defaultAction)
         case .downloading, .preparing:
-            Button("내려받기") {}.disabled(true)
+            Button(tr("내려받기")) {}.disabled(true)
         case .idle, .failed:
-            Button("내려받기") { Task { await updater.download(release, install: false) } }
+            Button(tr("내려받기")) { Task { await updater.download(release, install: false) } }
                 .keyboardShortcut(.defaultAction)
         }
     }
@@ -118,9 +118,9 @@ struct UpdateBanner: View {
         if let staged = updater.staged, updater.phase == .staged {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.app.fill").foregroundStyle(.tint)
-                Text("Gitty \(staged.version)을 받아 뒀어요. 종료하면 설치돼요.")
+                Text(tr("Gitty \(staged.version)을 받아 뒀어요. 종료하면 설치돼요."))
                 Spacer()
-                Button("지금 다시 시작") { updater.restartNow() }
+                Button(tr("지금 다시 시작")) { updater.restartNow() }
                     .controlSize(.small)
             }
             .font(.callout)
@@ -134,7 +134,7 @@ struct UpdateBanner: View {
 struct UpdateCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button("업데이트 확인…") {
+            Button(tr("업데이트 확인…")) {
                 Task { await Updater.shared.check(manual: true) }
             }
         }
@@ -148,19 +148,19 @@ struct UpdateSettingsSection: View {
     @State private var updater = Updater.shared
 
     var body: some View {
-        Section("업데이트") {
-            LabeledContent("지금 버전") {
+        Section(tr("업데이트")) {
+            LabeledContent(tr("지금 버전")) {
                 HStack {
                     Text(Updater.currentVersion)
                     if updater.checking {
                         ProgressView().controlSize(.small)
                     } else {
-                        Button("지금 확인") { Task { await updater.check(manual: true) } }
+                        Button(tr("지금 확인")) { Task { await updater.check(manual: true) } }
                     }
                 }
             }
-            Toggle("자동으로 업데이트 확인", isOn: $autoCheck)
-            Toggle("업데이트를 자동으로 설치", isOn: $autoInstall)
+            Toggle(tr("자동으로 업데이트 확인"), isOn: $autoCheck)
+            Toggle(tr("업데이트를 자동으로 설치"), isOn: $autoInstall)
                 .disabled(!autoCheck || !updater.canInstallInPlace)
             Text(installHint)
                 .font(.caption)
@@ -170,13 +170,13 @@ struct UpdateSettingsSection: View {
 
     private var installHint: String {
         if !updater.canInstallInPlace {
-            return "지금 위치(\(Bundle.main.bundleURL.deletingLastPathComponent().path))에는 바로 설치할 수 없어서, 새 버전이 나오면 알려 주고 dmg를 내려받아 드려요."
+            return tr("지금 위치(\(Bundle.main.bundleURL.deletingLastPathComponent().path))에는 바로 설치할 수 없어서, 새 버전이 나오면 알려 주고 dmg를 내려받아 드려요.")
         }
         var text = autoInstall
-            ? "새 버전을 미리 받아 두었다가 Gitty를 종료할 때 설치해요."
-            : "새 버전이 나오면 알려 주고, 원하면 dmg를 내려받아 드려요."
+            ? tr("새 버전을 미리 받아 두었다가 Gitty를 종료할 때 설치해요.")
+            : tr("새 버전이 나오면 알려 주고, 원하면 dmg를 내려받아 드려요.")
         if let last = updater.lastCheck {
-            text += " 마지막 확인: \(last.formatted(date: .abbreviated, time: .shortened))"
+            text += tr(" 마지막 확인: \(last.formatted(date: .abbreviated, time: .shortened))")
         }
         return text
     }

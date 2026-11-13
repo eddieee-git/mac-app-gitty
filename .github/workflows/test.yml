@@ -14,3 +14,5 @@ jobs:
         run: swift build
       - name: 동작 시험
         run: ./scripts/test.sh
+      - name: 번역 빠짐 확인
+        run: python3 scripts/l10n.py keys

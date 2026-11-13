@@ -27,15 +27,15 @@ struct LogView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                TextField("검색 (예: upload, 파일 이름)", text: $filter)
+                TextField(tr("검색 (예: upload, 파일 이름)"), text: $filter)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260)
-                Toggle("오류만", isOn: $onlyErrors)
+                Toggle(tr("오류만"), isOn: $onlyErrors)
                 Spacer()
-                Button("Finder에서 보기") {
+                Button(tr("Finder에서 보기")) {
                     NSWorkspace.shared.activateFileViewerSelecting([Log.fileURL])
                 }
-                Button("복사") {
+                Button(tr("복사")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(shownLines.joined(separator: "\n"), forType: .string)
                 }
@@ -59,7 +59,7 @@ struct LogView: View {
                 }
                 .overlay {
                     if shownLines.isEmpty {
-                        Text(text.isEmpty ? "아직 기록이 없어요" : "조건에 맞는 기록이 없어요")
+                        Text(text.isEmpty ? tr("아직 기록이 없어요") : tr("조건에 맞는 기록이 없어요"))
                             .foregroundStyle(.secondary)
                     }
                 }

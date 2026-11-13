@@ -129,7 +129,7 @@ final class Places {
 
     // MARK: - Google Drive "내 드라이브"
 
-    private static let myDriveNames: Set<String> = ["My Drive", "내 드라이브"]
+    private static let myDriveNames: Set<String> = ["My Drive", "내 드라이브"] // no-tr
     private static let addedKey = "autoAddedFavoritePaths"
     /// Spotlight로 찾은 미러링 폴더 (홈 바로 아래가 아닌 곳에 둔 경우)
     private var foundMyDrives: [URL] = []
@@ -169,23 +169,23 @@ final class Places {
         for account in accounts {
             let children = (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? []
             for child in children where isMyDrive(child) && isDir(child) {
-                streaming.append((real(child), email(of: account).map { "내 드라이브 (\($0))" } ?? "내 드라이브"))
+                streaming.append((real(child), email(of: account).map { tr("내 드라이브 (\($0))") } ?? tr("내 드라이브")))
             }
         }
         // 미러링: 홈 바로 아래(기본 위치)와 Spotlight로 찾은 곳
         var mirrored: [(URL, String)] = []
-        let homeCandidates = ["My Drive", "내 드라이브", "Google Drive"].map { home.appendingPathComponent($0, isDirectory: true) }
+        let homeCandidates = ["My Drive", "내 드라이브", "Google Drive"].map { home.appendingPathComponent($0, isDirectory: true) } // no-tr
         for url in homeCandidates + extra where isDir(url) {
             let path = real(url).path
             if accountPaths.contains(path) { continue }   // ~/Google Drive → 계정 폴더 바로가기는 내 드라이브가 아님
             if (streaming + mirrored).contains(where: { $0.0.path == path }) { continue }
-            mirrored.append((real(url), "내 드라이브"))
+            mirrored.append((real(url), tr("내 드라이브")))
         }
         // 미러링인데 CloudStorage 쪽이 진짜 빈 폴더면 빼고, 계정 이름은 미러링 폴더에 붙인다
         if !mirrored.isEmpty {
             streaming.removeAll { !hasVisibleItems($0.0) }
             if streaming.isEmpty, mirrored.count == 1, accounts.count == 1, let mail = email(of: accounts[0]) {
-                mirrored[0].1 = "내 드라이브 (\(mail))"
+                mirrored[0].1 = tr("내 드라이브 (\(mail))")
             }
         }
         return streaming + mirrored
@@ -197,7 +197,7 @@ final class Places {
         searchedSpotlight = true
         Task {
             let r = await Shell.run("/usr/bin/mdfind", ["-onlyin", Self.home.path,
-                "(kMDItemFSName == 'My Drive' || kMDItemFSName == '내 드라이브') && kMDItemContentType == 'public.folder'"])
+                "(kMDItemFSName == 'My Drive' || kMDItemFSName == '내 드라이브') && kMDItemContentType == 'public.folder'"]) // no-tr
             let urls = r.stdout.split(separator: "\n").map { URL(fileURLWithPath: String($0), isDirectory: true) }
                 .filter { !$0.path.contains("/Library/") && !$0.path.contains("/.Trash/") }
             guard !urls.isEmpty else { return }
@@ -253,7 +253,7 @@ final class Places {
         if myDriveNames.contains(url.lastPathComponent),
            let account = url.deletingLastPathComponent().lastPathComponent.split(separator: "-", maxSplits: 1).dropFirst().first,
            url.deletingLastPathComponent().lastPathComponent.lowercased().hasPrefix("googledrive") {
-            return "내 드라이브 (\(account))"
+            return tr("내 드라이브 (\(account))")
         }
         return FileManager.default.displayName(atPath: url.path)
     }
@@ -301,7 +301,7 @@ final class RepoFavorites {
 
     var actions: FavoriteActions {
         FavoriteActions(isFavorite: isFavorite, add: add, remove: remove, move: move,
-                        resetLabel: "즐겨찾기 모두 지우기", reset: clear)
+                        resetLabel: tr("즐겨찾기 모두 지우기"), reset: clear)
     }
 
     private func relative(_ url: URL) -> String? {

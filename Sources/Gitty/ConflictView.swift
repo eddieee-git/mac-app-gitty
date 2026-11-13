@@ -11,16 +11,16 @@ struct ConflictPanel: View {
         ZStack {
             Color.black.opacity(0.25).ignoresSafeArea()
             VStack(alignment: .leading, spacing: 12) {
-                Label("다른 곳에서 같은 파일을 바꿨어요", systemImage: "arrow.triangle.merge")
+                Label(tr("다른 곳에서 같은 파일을 바꿨어요"), systemImage: "arrow.triangle.merge")
                     .font(.title3.bold())
-                Text("파일마다 남길 쪽을 고르세요. 고르기 전에는 다른 작업을 할 수 없어요.")
+                Text(tr("파일마다 남길 쪽을 고르세요. 고르기 전에는 다른 작업을 할 수 없어요."))
                     .foregroundStyle(.secondary)
 
                 HStack {
-                    Text("모두").foregroundStyle(.secondary)
-                    Button("내 것") { setAll(.mine) }
-                    Button("원격 것") { setAll(.theirs) }
-                    Button("둘 다") { setAll(.both) }
+                    Text(tr("모두")).foregroundStyle(.secondary)
+                    Button(tr("내 것")) { setAll(.mine) }
+                    Button(tr("원격 것")) { setAll(.theirs) }
+                    Button(tr("둘 다")) { setAll(.both) }
                 }
                 .controlSize(.small)
 
@@ -36,13 +36,13 @@ struct ConflictPanel: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
 
-                Text("둘 다 남기면 원격 것은 ‘이름 (원격).확장자’로 옆에 저장돼요. 어느 쪽이든 git 기록에는 모두 남아요.")
+                Text(tr("둘 다 남기면 원격 것은 ‘이름 (원격).확장자’로 옆에 저장돼요. 어느 쪽이든 git 기록에는 모두 남아요."))
                     .font(.caption).foregroundStyle(.secondary)
 
                 HStack {
-                    Button("나중에 (원격 변경 받지 않기)") { Task { await model.cancelConflicts() } }
+                    Button(tr("나중에 (원격 변경 받지 않기)")) { Task { await model.cancelConflicts() } }
                     Spacer()
-                    Button("정리하고 올리기") {
+                    Button(tr("정리하고 올리기")) {
                         var picked: [String: ConflictChoice] = [:]
                         for file in files { picked[file.path] = choices[file.path] ?? .both }
                         Task { await model.resolveConflicts(picked) }
@@ -65,9 +65,9 @@ struct ConflictPanel: View {
             }
             Spacer()
             Picker("", selection: Binding(get: { choices[file.path] ?? .both }, set: { choices[file.path] = $0 })) {
-                Text("내 것").tag(ConflictChoice.mine)
-                Text("원격 것").tag(ConflictChoice.theirs)
-                Text("둘 다").tag(ConflictChoice.both)
+                Text(tr("내 것")).tag(ConflictChoice.mine)
+                Text(tr("원격 것")).tag(ConflictChoice.theirs)
+                Text(tr("둘 다")).tag(ConflictChoice.both)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -80,9 +80,9 @@ struct ConflictPanel: View {
     private func note(_ file: ConflictFile) -> String {
         let place = (file.path as NSString).deletingLastPathComponent
         let where_ = place.isEmpty ? "/" : "/\(place)"
-        if file.mine == nil { return "\(where_) · 이 Mac에서 지웠고, 원격에서 바꿨어요" }
-        if file.theirs == nil { return "\(where_) · 이 Mac에서 바꿨고, 원격에서 지웠어요" }
-        return "\(where_) · 양쪽에서 바꿨어요"
+        if file.mine == nil { return tr("\(where_) · 이 Mac에서 지웠고, 원격에서 바꿨어요") }
+        if file.theirs == nil { return tr("\(where_) · 이 Mac에서 바꿨고, 원격에서 지웠어요") }
+        return tr("\(where_) · 양쪽에서 바꿨어요")
     }
 
     private func setAll(_ choice: ConflictChoice) {

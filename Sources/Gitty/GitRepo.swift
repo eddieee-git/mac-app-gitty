@@ -37,7 +37,7 @@ enum ConflictChoice: String, Sendable, CaseIterable {
 /// pull 중 충돌: 합치기(merge)를 열어 둔 채로 던진다. 사용자가 고르면 resolveConflicts로 마무리한다.
 struct MergeConflictError: LocalizedError {
     let files: [ConflictFile]
-    var errorDescription: String? { "원격 변경과 충돌한 파일이 \(files.count)개 있어요." }
+    var errorDescription: String? { tr("원격 변경과 충돌한 파일이 \(files.count)개 있어요.") }
 }
 
 actor GitRepo {
@@ -52,9 +52,22 @@ actor GitRepo {
     static let lfsThreshold: Int64 = 100 * 1024 * 1024
     /// GitHub LFS 파일 하나 한도 (무료 요금제 2 GB)
     static let lfsMaxSize: Int64 = 2 * 1024 * 1024 * 1024
+    /// 설정: 큰 파일(LFS)은 열거나 복사할 때만 받기
+    nonisolated static let lfsOnDemandKey = "lfsOnDemand"
 
     init(root: URL) {
         self.root = root
+    }
+
+    @MainActor private static var instances: [String: GitRepo] = [:]
+
+    /// 같은 클론은 같은 GitRepo를 쓴다 (actor라 작업이 한 줄로 서서 git 잠금이 겹치지 않는다)
+    @MainActor static func shared(for root: URL) -> GitRepo {
+        let key = root.resolvingSymlinksInPath().standardizedFileURL.path
+        if let repo = instances[key] { return repo }
+        let repo = GitRepo(root: root)
+        instances[key] = repo
+        return repo
     }
 
     // MARK: - git 실행
@@ -106,7 +119,10 @@ actor GitRepo {
     @discardableResult
     private func git(_ args: [String], streaming: Bool = false) async throws -> String {
         let r = await result(args, streaming: streaming)
-        guard r.status == 0 else { throw GittyError(message: r.errorText) }
+        guard r.status == 0 else {
+            if Cancellation.isRequested { throw CancellationError() }
+            throw GittyError(message: r.errorText)
+        }
         return r.stdout
     }
 
@@ -114,7 +130,7 @@ actor GitRepo {
 
     static func clone(_ spec: String, into parent: URL, reporter: ProgressReporter? = nil) async throws -> URL {
         let spec = spec.trimmed
-        guard !spec.isEmpty else { throw GittyError(message: "저장소를 입력하세요.") }
+        guard !spec.isEmpty else { throw GittyError(message: tr("저장소를 입력하세요.")) }
 
         let remote: String
         if spec.contains("://") || spec.hasPrefix("git@") {
@@ -128,7 +144,7 @@ actor GitRepo {
         if cleaned.hasSuffix(".git") { cleaned.removeLast(4) }
         let parts = Array(cleaned.replacingOccurrences(of: ":", with: "/")
             .split(separator: "/").map(String.init).suffix(2))
-        guard parts.count == 2 else { throw GittyError(message: "저장소 형식이 올바르지 않습니다: \(spec)") }
+        guard parts.count == 2 else { throw GittyError(message: tr("저장소 형식이 올바르지 않습니다: \(spec)")) }
         let dest = parent.appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
 
         if FileManager.default.fileExists(atPath: dest.appendingPathComponent(".git").path) {
@@ -137,8 +153,9 @@ actor GitRepo {
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         Log.info("clone", "\(remote) → \(dest.path)")
-        reporter?.begin("클론 준비 중")
-        let r = await Shell.run(Shell.gitPath, baseArgs(identity: nil) + ["clone", "--progress", "--", remote, dest.path],
+        reporter?.begin(tr("클론 준비 중"))
+        // --filter=blob:none: 지난 버전들의 파일 내용은 필요할 때 받는다 (기록이 긴 저장소가 훨씬 빨리 열린다)
+        let r = await Shell.run(Shell.gitPath, baseArgs(identity: nil) + ["clone", "--progress", "--filter=blob:none", "--", remote, dest.path],
                                 onStderrLine: reporter.map { rep in { @Sendable line in rep.gitLine(line) } })
         guard r.status == 0 else {
             Log.error("clone", "실패 \(r.status)\n\(r.errorText)")
@@ -186,7 +203,7 @@ actor GitRepo {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             let prefix = current.isEmpty || current.hasSuffix("\n") ? "" : "\n"
-            try (current + prefix + "# Gitty: Finder가 만드는 파일\n.DS_Store\n").write(to: file, atomically: true, encoding: .utf8)
+            try (current + prefix + "# Gitty: Finder가 만드는 파일\n.DS_Store\n" /* no-tr */).write(to: file, atomically: true, encoding: .utf8)
             Log.info("repo", ".DS_Store를 이 클론의 git 제외 목록에 추가")
         } catch {
             Log.error("repo", "git 제외 목록을 쓰지 못했어요: \(error.localizedDescription)")
@@ -203,6 +220,24 @@ actor GitRepo {
     }
 
     /// LFS를 쓰는 저장소면 이 클론에 LFS를 켜고 실제 파일을 받는다 (안 그러면 작은 포인터 파일만 보임)
+    /// LFS 파일인데 아직 내용을 받지 않은(포인터만 있는) 파일인지
+    nonisolated static func isLFSPointer(_ url: URL) -> Bool {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size < 1024,
+              let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 64)) ?? Data()
+        return String(decoding: head, as: UTF8.self).hasPrefix("version https://git-lfs.github.com/spec/")
+    }
+
+    /// 포인터만 있는 LFS 파일들의 실제 내용을 받는다 ("필요할 때 받기"일 때 열기·복사 전에)
+    func materialize(_ paths: [String]) async throws {
+        let pointers = paths.filter { Self.isLFSPointer(url(for: $0)) }
+        guard !pointers.isEmpty else { return }
+        reporter?.begin(tr("큰 파일 받는 중"))
+        Log.info("lfs", "필요한 큰 파일 받기: \(pointers.joined(separator: ", "))")
+        try await git(["lfs", "pull", "--include=" + pointers.joined(separator: ",")], streaming: true)
+    }
+
     func prepareLFS() async {
         let attributes = (try? String(contentsOf: root.appendingPathComponent(".gitattributes"), encoding: .utf8)) ?? ""
         guard attributes.contains("filter=lfs") else { return }
@@ -210,12 +245,111 @@ actor GitRepo {
             Log.error("lfs", "이 저장소는 Git LFS를 쓰지만 git-lfs가 설치되어 있지 않아요. 큰 파일은 포인터 파일로만 보여요.\n터미널에서 brew install git-lfs 후 다시 열어 주세요.")
             return
         }
-        reporter?.begin("LFS 파일 받는 중")
         _ = await result(["lfs", "install", "--local"])
+        // "필요할 때 받기"면 여기서 다 받지 않고, 열거나 복사할 때 그 파일만 받는다
+        if UserDefaults.standard.bool(forKey: Self.lfsOnDemandKey) { return }
+        reporter?.begin(tr("LFS 파일 받는 중"))
         _ = await result(["lfs", "pull"], streaming: true)
     }
 
     // MARK: - 동기화
+
+    /// 파일 상태: 저장소 폴더에서 직접 고친 것, 새로 생긴 것, 아직 올리지 않은 커밋의 파일
+    func status() async -> RepoStatus {
+        var s = RepoStatus()
+        let porcelain = await result(["status", "--porcelain=v1", "-z", "--untracked-files=all"], probe: true).stdout
+        var records = porcelain.split(separator: "\0", omittingEmptySubsequences: true).map(String.init).makeIterator()
+        while let rec = records.next() {
+            guard rec.count > 3 else { continue }
+            let code = rec.prefix(2)
+            let path = String(rec.dropFirst(3))
+            if code.first == "R" || code.first == "C" { _ = records.next() }   // 이름 바꾸기는 옛 이름이 뒤따른다
+            if code == "??" {
+                if (path as NSString).lastPathComponent.hasPrefix(".gitty-") { continue }
+                s.set(path, .untracked)
+            } else {
+                s.set(path, .modified)
+            }
+        }
+        let ahead = await result(["diff", "--name-only", "-z", "@{u}..HEAD"], probe: true)
+        if ahead.status == 0 {
+            for path in ahead.stdout.split(separator: "\0").map(String.init) where !path.isEmpty {
+                s.set(path, .unpushed)
+            }
+        }
+        if UserDefaults.standard.bool(forKey: Self.lfsOnDemandKey) {
+            let lfs = await result(["lfs", "ls-files", "-n"], probe: true)
+            if lfs.status == 0 {
+                for path in lfs.stdout.split(separator: "\n").map(String.init)
+                where Self.isLFSPointer(url(for: path)) {
+                    s.set(path, .cloudOnly)
+                }
+            }
+        }
+        return s
+    }
+
+    /// 폴더 맞추기 (내 폴더 → Git): 파일들을 저장소 dir 아래 같은 자리로 복사하고, deletes는 지운 뒤 한 번에 커밋
+    func syncIn(from source: URL, files: [String], deletes: [String], dir: String) async throws {
+        let fm = FileManager.default
+        let base = url(for: dir)
+        var touched: [String] = []
+        let total = FileOps.totalSize(files.map { source.appendingPathComponent($0) })
+        reporter?.begin(tr("맞추는 중"), totalBytes: total)
+        do {
+            for rel in files {
+                try Cancellation.check()
+                let src = source.appendingPathComponent(rel)
+                let dst = base.appendingPathComponent(rel)
+                try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
+                try FileOps.copyFile(src, to: dst, progress: reporter.map { r in { r.advance($0) } })
+                let repoPath = dir.isEmpty ? rel : "\(dir)/\(rel)"
+                touched.append(repoPath)
+                // 100MB가 넘으면 LFS로 (GitHub이 일반 파일로는 받지 않는다)
+                let size = Int64((try? dst.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                if size > Self.lfsThreshold {
+                    guard size <= Self.lfsMaxSize else { throw GittyError(message: tr("GitHub LFS는 파일 하나에 2GB까지만 받아요: \(rel)")) }
+                    guard await lfsAvailable() else { throw GittyError(message: tr("100MB가 넘는 파일이 있어 Git LFS가 필요해요: \(rel)\n터미널에서 brew install git-lfs 를 실행해 주세요.")) }
+                    _ = await result(["lfs", "install", "--local"])
+                    try await git(["lfs", "track", "--filename", repoPath])
+                    if !touched.contains(".gitattributes") { touched.append(".gitattributes") }
+                }
+            }
+            for rel in deletes {
+                try fm.removeItem(at: base.appendingPathComponent(rel))
+                touched.append(dir.isEmpty ? rel : "\(dir)/\(rel)")
+            }
+        } catch {
+            await rollback(touched)
+            throw error
+        }
+        try await commit(tr("Sync \(dir.isEmpty ? "/" : "/" + dir) (\(files.count)개 올림\(deletes.isEmpty ? "" : tr(", \(deletes.count)개 지움")))"),
+                         paths: touched)
+    }
+
+    /// 저장소 폴더에서 직접 고친 파일들을 올린다
+    func commitChanges(_ paths: [String]) async throws {
+        try await commit("Update \(summary(paths, in: ""))", paths: paths)
+    }
+
+    /// 원격 웹 주소 (GitHub이면 https://github.com/owner/repo)
+    func webBase() async -> (url: String, branch: String)? {
+        let r = await result(["remote", "get-url", "origin"], probe: true)
+        guard r.status == 0, let branch = try? await currentBranch() else { return nil }
+        var remote = r.stdout.trimmed
+        if remote.hasSuffix(".git") { remote.removeLast(4) }
+        if remote.hasPrefix("git@") {   // git@github.com:owner/repo
+            remote = "https://" + remote.dropFirst(4).replacingOccurrences(of: ":", with: "/")
+        }
+        // 주소에 들어 있는 인증 정보(https://사용자:토큰@…)는 뺀다
+        guard var comps = URLComponents(string: remote), comps.scheme == "https",
+              let host = comps.host, host.contains("github") else { return nil }
+        comps.user = nil
+        comps.password = nil
+        guard let clean = comps.string else { return nil }
+        return (clean, branch)
+    }
 
     private func currentBranch() async throws -> String {
         try await git(["symbolic-ref", "--short", "HEAD"]).trimmed
@@ -227,9 +361,15 @@ actor GitRepo {
         if check.status == 2 { return }            // 원격에 아직 브랜치 없음 (빈 저장소)
         guard check.status == 0 else { throw GittyError(message: check.errorText) }
 
-        reporter?.begin("원격에서 받는 중")
+        reporter?.begin(tr("원격에서 받는 중"))
         let r = await result(["pull", "--progress", "--rebase", "--autostash", "origin", branch], streaming: true)
         guard r.status != 0 else { return }
+        if Cancellation.isRequested {
+            Cancellation.reset()
+            _ = await result(["rebase", "--abort"], probe: true)
+            Cancellation.request()
+            throw CancellationError()
+        }
         _ = await result(["rebase", "--abort"], probe: true)
 
         // rebase로 안 되면 합치기(merge)로 다시 시도해서, 충돌한 파일을 사용자에게 물어본다
@@ -238,7 +378,7 @@ actor GitRepo {
         let files = await conflicts()
         if files.isEmpty {
             _ = await result(["merge", "--abort"], probe: true)
-            throw GittyError(message: "원격 변경을 받지 못했어요.\n\(r.errorText)\n\(merge.errorText)")
+            throw GittyError(message: tr("원격 변경을 받지 못했어요.\n\(r.errorText)\n\(merge.errorText)"))
         }
         Log.info("conflict", "원격과 충돌: " + files.map(\.path).joined(separator: ", "))
         throw MergeConflictError(files: files)
@@ -279,7 +419,7 @@ actor GitRepo {
                 guard let blob else { try? fm.removeItem(at: dest); return }
                 try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let r = await result(["cat-file", "--filters", "--path=\(file.path)", blob], stdoutTo: dest)
-                guard r.status == 0 else { throw GittyError(message: "\(file.path)을(를) 꺼내지 못했어요.\n\(r.errorText)") }
+                guard r.status == 0 else { throw GittyError(message: tr("\(file.path)을(를) 꺼내지 못했어요.\n\(r.errorText)")) }
             }
             switch choice {
             case .mine:
@@ -311,7 +451,7 @@ actor GitRepo {
         let base = ext.isEmpty ? file : (file as NSString).deletingPathExtension
         var n = 1
         while true {
-            let name = "\(base) (원격\(n == 1 ? "" : " \(n)"))" + (ext.isEmpty ? "" : ".\(ext)")
+            let name = tr("\(base) (원격\(n == 1 ? "" : " \(n)"))") + (ext.isEmpty ? "" : ".\(ext)")
             let candidate = dir.isEmpty ? name : "\(dir)/\(name)"
             if !existing(candidate) { return candidate }
             n += 1
@@ -326,11 +466,11 @@ actor GitRepo {
 
     func push() async throws {
         let branch = try await currentBranch()
-        reporter?.begin("push 준비 중")
+        reporter?.begin(tr("push 준비 중"))
         if await result(["push", "--progress", "-u", "origin", branch], streaming: true).status != 0 {
             // 원격이 앞서 있으면 받아서 다시 시도
             try await pull()
-            reporter?.begin("push 다시 시도 중")
+            reporter?.begin(tr("push 다시 시도 중"))
             try await git(["push", "--progress", "-u", "origin", branch], streaming: true)
         }
         let hash = (try? await git(["rev-parse", "--short", "HEAD"]))?.trimmed ?? "?"
@@ -357,7 +497,7 @@ actor GitRepo {
     /// 이번 작업에서 건드린 경로만 커밋한다. 클론 폴더에 따로 생긴 파일(.DS_Store, 메모 등)은 올리지 않는다.
     /// 변경이 없으면 아무것도 하지 않는다. push는 AppModel이 연달아 한 작업을 모아서 한 번에 한다.
     private func commit(_ message: String, paths: [String]) async throws {
-        reporter?.begin("커밋 준비 중")
+        reporter?.begin(tr("커밋 준비 중"))
         var stage: [String] = []
         for path in Set(paths) where !path.isEmpty {
             // 지금 있거나(새로 생김·바뀜) git이 알고 있는(지워짐·옮겨짐) 경로만 넘긴다. 없는 경로를 넘기면 git add가 실패한다.
@@ -393,11 +533,11 @@ actor GitRepo {
 
     /// 커밋 하나를 되돌리는 새 커밋을 만든다 (히스토리는 지우지 않는다)
     func revert(_ commit: CommitRef) async throws {
-        reporter?.begin("되돌리는 중")
+        reporter?.begin(tr("되돌리는 중"))
         let r = await result(["revert", "--no-edit", commit.hash])
         guard r.status == 0 else {
             _ = await result(["revert", "--abort"], probe: true)
-            throw GittyError(message: "되돌리지 못했어요. 그 뒤에 같은 파일이 다시 바뀌었을 수 있어요.\n\(r.errorText)")
+            throw GittyError(message: tr("되돌리지 못했어요. 그 뒤에 같은 파일이 다시 바뀌었을 수 있어요.\n\(r.errorText)"))
         }
         Log.info("commit", "되돌림: \(commit.message)")
     }
@@ -421,7 +561,7 @@ actor GitRepo {
         let r = await result(["cat-file", "--filters", "\(version.hash):\(version.path)"], stdoutTo: dest)
         guard r.status == 0 else {
             try? FileManager.default.removeItem(at: dest)
-            throw GittyError(message: "그 버전을 꺼내지 못했어요.\n\(r.errorText)")
+            throw GittyError(message: tr("그 버전을 꺼내지 못했어요.\n\(r.errorText)"))
         }
     }
 
@@ -447,33 +587,35 @@ actor GitRepo {
             let names = large.map { "\($0.path) (\(ProgressReporter.bytes($0.size)))" }
             if let huge = large.first(where: { $0.size > Self.lfsMaxSize }) {
                 Log.error("upload", "2GB 초과로 중단: \(huge.path)")
-                throw GittyError(message: "GitHub LFS는 파일 하나에 2GB까지만 받아요:\n\(huge.path) (\(ProgressReporter.bytes(huge.size)))")
+                throw GittyError(message: tr("GitHub LFS는 파일 하나에 2GB까지만 받아요:\n\(huge.path) (\(ProgressReporter.bytes(huge.size)))"))
             }
             guard await lfsAvailable() else {
                 Log.error("upload", "100MB 초과 파일이 있지만 git-lfs가 없어 중단: \(names.joined(separator: ", "))")
-                throw GittyError(message: """
-                    100MB가 넘는 파일은 Git LFS로 올려야 해요. 이 Mac에 git-lfs가 없어요.
-                    터미널에서 brew install git-lfs 를 실행한 뒤 다시 시도해 주세요.
-
-                    \(names.joined(separator: "\n"))
-                    """)
+                throw GittyError(message: tr("100MB가 넘는 파일은 Git LFS로 올려야 해요. 이 Mac에 git-lfs가 없어요.\n터미널에서 brew install git-lfs 를 실행한 뒤 다시 시도해 주세요.\n\n\(names.joined(separator: "\n"))"))
             }
             try await git(["lfs", "install", "--local"])
             Log.info("lfs", "LFS로 올릴 파일:\n" + names.joined(separator: "\n"))
         }
 
         let total = FileOps.totalSize(sources)
-        reporter?.begin("복사 중", totalBytes: total)
-        try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
-        for src in sources {
-            try copyFiltered(src, to: destDir.appendingPathComponent(src.lastPathComponent))
-        }
-        for file in large {
-            try await git(["lfs", "track", "--filename", file.path])
-        }
+        reporter?.begin(tr("복사 중"), totalBytes: total)
         let names = sources.map(\.lastPathComponent)
         var touched = names.map { dir.isEmpty ? $0 : "\(dir)/\($0)" }
         if !large.isEmpty { touched.append(".gitattributes") }
+        do {
+            try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+            for src in sources {
+                try copyFiltered(src, to: destDir.appendingPathComponent(src.lastPathComponent))
+            }
+            for file in large {
+                try await git(["lfs", "track", "--filename", file.path])
+            }
+            try Cancellation.check()
+        } catch {
+            // 취소나 실패: 반쯤 복사된 것을 치우고 원래대로
+            await rollback(touched)
+            throw error
+        }
         try await commit("Upload \(summary(names, in: dir))", paths: touched)
     }
 
@@ -509,10 +651,10 @@ actor GitRepo {
             let newPath = dir.isEmpty ? name : "\(dir)/\(name)"
             if newPath == path { continue }
             if dir == path || dir.hasPrefix(path + "/") {
-                throw GittyError(message: "폴더를 자기 자신 안으로 옮길 수 없습니다: \(name)")
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없습니다: \(name)"))
             }
             if fm.fileExists(atPath: url(for: newPath).path) {
-                throw GittyError(message: "옮길 폴더에 같은 이름이 이미 있습니다: \(newPath)")
+                throw GittyError(message: tr("옮길 폴더에 같은 이름이 이미 있습니다: \(newPath)"))
             }
             try fm.createDirectory(at: url(for: dir), withIntermediateDirectories: true)
             let tracked = await result(["ls-files", "--error-unmatch", "--", path], probe: true).status == 0
@@ -537,6 +679,23 @@ actor GitRepo {
         try await commit("Create folder \(path)", paths: [path])
     }
 
+    /// 커밋 전에 멈춘 작업을 되돌린다: 원래 있던 파일은 마지막 커밋 상태로, 새로 생긴 것은 지운다
+    private func rollback(_ paths: [String]) async {
+        let wasCancelled = Cancellation.isRequested
+        Cancellation.reset()
+        defer { if wasCancelled { Cancellation.request() } }
+        for path in paths {
+            let tracked = await result(["--literal-pathspecs", "ls-tree", "-r", "--name-only", "HEAD", "--", path], probe: true)
+            if tracked.status == 0, !tracked.stdout.trimmed.isEmpty {
+                _ = await result(["--literal-pathspecs", "checkout", "HEAD", "--", path], probe: true)
+                _ = await result(["--literal-pathspecs", "clean", "-fdq", "--", path], probe: true)
+            } else {
+                try? FileManager.default.removeItem(at: url(for: path))
+            }
+        }
+        Log.info("upload", "멈춘 업로드를 되돌림: \(paths.joined(separator: ", "))")
+    }
+
     // MARK: - 헬퍼
 
     private func url(for relative: String) -> URL {
@@ -545,7 +704,7 @@ actor GitRepo {
 
     private func summary(_ names: [String], in dir: String) -> String {
         let shown = names.prefix(3).map { dir.isEmpty ? $0 : "\(dir)/\($0)" }.joined(separator: ", ")
-        return names.count > 3 ? "\(shown) 외 \(names.count - 3)개" : shown
+        return names.count > 3 ? tr("\(shown) 외 \(names.count - 3)개") : shown
     }
 
     private func copyFiltered(_ src: URL, to dst: URL) throws {

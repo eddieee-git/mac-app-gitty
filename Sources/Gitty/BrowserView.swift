@@ -3,6 +3,7 @@ import AppKit
 
 /// 왼쪽 내 폴더 | 오른쪽 Git 저장소 — 두 패널 사이로 끌어다 놓아 파일을 주고받는다.
 struct BrowserView: View {
+    @FocusState private var focusedPane: PaneID?
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showLogPanel") private var showLog = true
@@ -12,9 +13,14 @@ struct BrowserView: View {
         VStack(spacing: 0) {
             VSplitView {
                 HSplitView {
-                    LocalPaneView()
+                    LocalPaneView(focus: $focusedPane)
                         .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-                    RepoPaneView()
+                    TransferBar()
+                        .frame(minWidth: 40, maxWidth: 40)
+                        // 좌우 패널 폭, 아래 진행 로그 높이를 기억
+                        .splitAutosave("main.panes", vertical: true)
+                        .splitAutosave("main.log", vertical: false)
+                    RepoPaneView(focus: $focusedPane)
                         .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(minHeight: 260, maxHeight: .infinity)
@@ -46,19 +52,19 @@ struct BrowserView: View {
                 Button {
                     model.close()
                 } label: {
-                    Label("저장소 목록", systemImage: "square.grid.2x2")
+                    Label(tr("저장소 목록"), systemImage: "square.grid.2x2")
                 }
-                .help("저장소 목록으로")
+                .help(tr("저장소 목록으로"))
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await model.refresh() }
                 } label: {
-                    Label("동기화", systemImage: "arrow.triangle.2.circlepath")
+                    Label(tr("동기화"), systemImage: "arrow.triangle.2.circlepath")
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(model.isBusy)
-                .help("Git 원격과 동기화 (⌘R)")
+                .help(tr("Git 원격과 동기화 (⌘R)"))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -83,10 +89,14 @@ struct BrowserView: View {
                     ProgressView().controlSize(.small)
                     Text(model.progress?.phase ?? busy)
                 }
+                Button(tr("취소")) { model.cancelCurrent() }
+                    .controlSize(.small)
+                    .disabled(busy == tr("취소하는 중…"))
+                    .help(tr("지금 하는 작업을 멈춰요. 커밋 전이면 원래대로 되돌려요."))
             } else {
                 if model.pushPending {
                     Image(systemName: "icloud.and.arrow.up").foregroundStyle(.secondary)
-                    Text(model.statusMessage + " · 곧 GitHub에 올려요")
+                    Text(model.statusMessage + tr(" · 곧 GitHub에 올려요"))
                 } else {
                     Image(systemName: model.unpushed > 0 ? "exclamationmark.icloud" : "checkmark.icloud")
                         .foregroundStyle(model.unpushed > 0 ? .orange : .green)
@@ -95,28 +105,34 @@ struct BrowserView: View {
             }
             Spacer()
             if let synced = model.lastSynced, !model.isBusy {
-                Text("동기화 \(synced.formatted(date: .omitted, time: .shortened))" + (autoSyncMinutes > 0 ? " · \(autoSyncMinutes)분마다" : ""))
+                Text(tr("동기화 \(synced.formatted(date: .omitted, time: .shortened))") + (autoSyncMinutes > 0 ? tr(" · \(autoSyncMinutes)분마다") : ""))
                     .foregroundStyle(.secondary)
-                    .help("⌘R로 지금 동기화 · 간격은 설정(⌘,)에서")
+                    .help(tr("⌘R로 지금 동기화 · 간격은 설정(⌘,)에서"))
+            }
+            if model.repoStatus.changedCount > 0 && !model.isBusy {
+                Text(tr("저장소 폴더에서 고친 파일 \(model.repoStatus.changedCount)개")).foregroundStyle(.orange)
+                    .help(model.repoStatus.changedPaths.prefix(15).joined(separator: "\n"))
+                Button(tr("올리기")) { Task { await model.commitChanges() } }
+                    .controlSize(.small)
             }
             if let undo = model.undoLabel, !model.isBusy {
-                Button("되돌리기") { Task { await model.undoLast() } }
+                Button(tr("되돌리기")) { Task { await model.undoLast() } }
                     .controlSize(.small)
-                    .help("마지막 Git 작업 되돌리기: \(undo) (⌥⌘Z)")
+                    .help(tr("마지막 Git 작업 되돌리기: \(undo) (⌥⌘Z)"))
             }
             if model.unpushed > 0 && !model.isBusy && !model.pushPending {
-                Text("push 안 된 커밋 \(model.unpushed)개").foregroundStyle(.orange)
-                Button("다시 시도") { Task { await model.refresh() } }
+                Text(tr("push 안 된 커밋 \(model.unpushed)개")).foregroundStyle(.orange)
+                Button(tr("다시 시도")) { Task { await model.refresh() } }
                     .controlSize(.small)
             }
-            Text("항목을 끌어서 반대쪽 패널에 놓으면 복사됩니다")
+            Text(tr("가운데 화살표나 끌어다 놓기로 복사해요"))
                 .foregroundStyle(.tertiary)
             Toggle(isOn: $showLog) {
-                Label("진행 로그", systemImage: "text.alignleft")
+                Label(tr("진행 로그"), systemImage: "text.alignleft")
             }
             .toggleStyle(.button)
             .controlSize(.small)
-            .help(showLog ? "진행 로그 숨기기" : "진행 로그 보기")
+            .help(showLog ? tr("진행 로그 숨기기") : tr("진행 로그 보기"))
         }
         .font(.callout)
         .padding(.horizontal, 12)

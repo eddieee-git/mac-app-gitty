@@ -19,6 +19,16 @@ enum Log {
     /// 기다리는 기록을 파일에 다 쓴다 (앱 종료 직전)
     static func flush() { queue.sync {} }
 
+    static let fileLoggingKey = "fileLogging"
+
+    /// 작업 기록 파일을 지운다 (지난 파일까지)
+    static func deleteFiles() {
+        queue.sync {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: previousURL)
+        }
+    }
+
     static func info(_ category: String, _ message: String) { write("INFO", category, message) }
     static func error(_ category: String, _ message: String) { write("ERROR", category, message) }
 
@@ -42,13 +52,15 @@ enum Log {
         let date = Date()
         // 홈 폴더 경로는 ~로 줄여서 읽기 쉽게, 토큰은 가려서
         let message = redact(message).replacingOccurrences(of: homePath + "/", with: "~/")
-        queue.async {
+        // 설정에서 끄면 파일에는 남기지 않는다 (창 아래 진행 로그에는 이번 실행 동안만 보인다)
+        let toFile = UserDefaults.standard.object(forKey: fileLoggingKey) as? Bool ?? true
+        if toFile { queue.async {
             let stamp = formatter.string(from: date)
             // 여러 줄 메시지는 들여써서 한 항목으로 보이게
             let body = message.replacingOccurrences(of: "\n", with: "\n    ")
             let line = "\(stamp) \(level) [\(category)] \(body)\n"
             append(line)
-        }
+        } }
         let entry = LogEntry(date: date, isError: level == "ERROR", category: category, message: message)
         Task { @MainActor in LogFeed.shared.append(entry) }
     }
@@ -95,7 +107,7 @@ enum Log {
                 if u.lastPathComponent == ".git" { e?.skipDescendants(); continue }
                 if let s = (try? u.resourceValues(forKeys: keys))?.fileSize { total += Int64(s); count += 1 }
             }
-            return "폴더, 파일 \(count)개, \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))"
+            return tr("폴더, 파일 \(count)개, \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))")
         }
         return ByteCountFormatter.string(fromByteCount: Int64(values?.fileSize ?? 0), countStyle: .file)
     }

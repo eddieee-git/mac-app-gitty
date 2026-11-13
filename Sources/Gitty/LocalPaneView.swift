@@ -3,10 +3,15 @@ import AppKit
 
 /// 왼쪽: 내 Mac의 폴더
 struct LocalPaneView: View {
-    static let paneName = "내 폴더"
+    static let paneName = tr("내 폴더")
 
     @Environment(AppModel.self) private var model
-    @State private var selection = Set<URL>()
+    var focus: FocusState<PaneID?>.Binding
+    /// 고른 항목은 AppModel에 둔다 (가운데 복사 버튼이 함께 쓴다)
+    private var selection: Set<URL> {
+        get { model.localSelection }
+        nonmutating set { model.localSelection = newValue }
+    }
     @State private var nameRequest: NameRequest?
     @State private var pending: PendingTransfer?
     @State private var dropTarget: DropTarget = .none
@@ -15,7 +20,9 @@ struct LocalPaneView: View {
     @State private var results: [FileItem]?
     @State private var searching = false
     @State private var partial = false
+    @AppStorage("localIcons") private var icons = false
     @AppStorage("showLocalTree") private var showTree = true
+    @AppStorage("localStacked") private var stacked = false
 
     private var local: LocalBrowser { model.local }
     private var shownItems: [FileItem] { results ?? local.items }
@@ -35,15 +42,14 @@ struct LocalPaneView: View {
                         $0.appendingPathComponent($1, isDirectory: true)
                     }
                 }
-                SearchBox(text: $query, prompt: "이 폴더에서 검색")
+                SearchBox(text: $query, prompt: tr("이 폴더에서 검색"))
                     .padding(.trailing, 10)
                     .padding(.bottom, 6)
             }
             Divider()
 
-            HSplitView {
-                if showTree {
-                    FileDropHost(name: "\(Self.paneName) 트리", target: $treeDropTarget,
+            TreeListSplit(stacked: stacked, showTree: showTree, autosave: "local.tree") {
+                    FileDropHost(name: tr("\(Self.paneName) 트리"), target: $treeDropTarget,
                                  accepts: { urls, folder in folder != nil && accepts(urls, folder) },
                                  onDrop: receive) {
                         FolderTree(favorites: model.places.favoriteRoots,
@@ -55,13 +61,10 @@ struct LocalPaneView: View {
                                    onSelect: { local.dir = $0 },
                                    favoriteActions: favoriteActions)
                     }
-                    .frame(minWidth: 140, idealWidth: 190, maxWidth: 360, maxHeight: .infinity)
-                }
-
+            } list: {
                 FileDropHost(name: Self.paneName, target: $dropTarget, accepts: accepts, onDrop: receive) {
                     fileTable
                 }
-                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: local.dir) {
@@ -87,84 +90,79 @@ struct LocalPaneView: View {
 
     private var header: some View {
         PaneHeader(title: Self.paneName, icon: "desktopcomputer", tint: .primary) {
-            Button { showTree.toggle() } label: { Label("폴더 트리", systemImage: "sidebar.left") }
-                .help(showTree ? "폴더 트리 숨기기" : "폴더 트리 보기")
+            Button { showTree.toggle() } label: { Label(tr("폴더 트리"), systemImage: "sidebar.left") }
+                .help(showTree ? tr("폴더 트리 숨기기") : tr("폴더 트리 보기"))
+            LayoutToggleButton(stacked: $stacked)
+                .disabled(!showTree)
+            ViewModeButton(icons: $icons)
             Menu {
-                Section("즐겨찾기") {
+                Section(tr("즐겨찾기")) {
                     ForEach(model.places.favoriteRoots) { root in
                         Button { local.dir = root.url } label: { Label(root.title, systemImage: root.icon) }
                     }
                 }
-                Section("위치") {
+                Section(tr("위치")) {
                     ForEach(model.places.locations) { root in
                         Button { local.dir = root.url } label: { Label(root.title, systemImage: root.icon) }
                     }
                 }
                 Divider()
-                Button("다른 폴더 선택…", action: chooseFolder)
+                Button(tr("다른 폴더 선택…"), action: chooseFolder)
             } label: {
-                Label("위치", systemImage: "star")
+                Label(tr("위치"), systemImage: "star")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("자주 쓰는 위치")
+            .help(tr("자주 쓰는 위치"))
 
-            Button { local.goUp() } label: { Label("상위 폴더", systemImage: "chevron.up") }
+            Button { local.goUp() } label: { Label(tr("상위 폴더"), systemImage: "chevron.up") }
                 .disabled(!local.canGoUp)
-                .help("상위 폴더")
-            Button { askNewFolder() } label: { Label("새 폴더", systemImage: "folder.badge.plus") }
-                .help("새 폴더")
-            Button { local.reload() } label: { Label("새로고침", systemImage: "arrow.clockwise") }
-                .help("새로고침")
-
-            Divider().frame(height: 16)
-
-            Button { sendToRepo(selectedItems, move: false) } label: {
-                Label("Git으로 복사", systemImage: "arrow.right.circle.fill")
-            }
-            .labelStyle(.titleAndIcon)
-            .disabled(selection.isEmpty || model.isBusy)
-            .help("선택한 항목을 오른쪽 Git 폴더로 복사 (업로드)")
+                .help(tr("상위 폴더"))
+            Button { askNewFolder() } label: { Label(tr("새 폴더"), systemImage: "folder.badge.plus") }
+                .help(tr("새 폴더"))
+            Button { local.reload() } label: { Label(tr("새로고침"), systemImage: "arrow.clockwise") }
+                .help(tr("새로고침"))
         }
     }
 
     private var fileTable: some View {
         FileTable(pane: Self.paneName,
                   items: shownItems,
-                  selection: $selection,
+                  selection: Bindable(model).localSelection,
                   emptyTitle: results == nil
-                    ? (local.loading ? "불러오는 중…" : (local.loadError != nil ? "이 폴더를 읽을 수 없어요" : "빈 폴더입니다"))
-                    : (searching ? "찾는 중…" : "검색 결과가 없어요"),
+                    ? (local.loading ? tr("불러오는 중…") : (local.loadError != nil ? tr("이 폴더를 읽을 수 없어요") : tr("빈 폴더입니다")))
+                    : (searching ? tr("찾는 중…") : tr("검색 결과가 없어요")),
                   emptyHint: results == nil
                     ? (local.loadError == "denied"
-                       ? "macOS가 Gitty의 접근을 막았어요.\n시스템 설정 → 개인정보 보호 및 보안 →\n파일 및 폴더(또는 전체 디스크 접근)에서 Gitty를 허용해 주세요."
-                       : (local.loadError ?? "오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다"))
-                    : "하위 폴더까지 이름으로 찾아요",
+                       ? tr("macOS가 Gitty의 접근을 막았어요.\n시스템 설정 → 개인정보 보호 및 보안 →\n파일 및 폴더(또는 전체 디스크 접근)에서 Gitty를 허용해 주세요.")
+                       : (local.loadError ?? tr("오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다")))
+                    : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
-                  onDelete: trash) { items in
+                  onDelete: trash,
+                  focus: focus, paneID: .local, onParent: { local.goUp() }, icons: icons) { items in
             if items.isEmpty {
-                Button("새 폴더…", action: askNewFolder)
-                Toggle("숨김 파일 보기", isOn: Binding(get: { local.showHidden }, set: { local.showHidden = $0 }))
+                Button(tr("새 폴더…"), action: askNewFolder)
+                Toggle(tr("숨김 파일 보기"), isOn: Binding(get: { local.showHidden }, set: { local.showHidden = $0 }))
             } else {
-                Button("열기") { items.forEach(open) }
-                Button("미리 보기") { QuickLook.shared.toggle(items.map(\.url)) }
+                Button(tr("열기")) { items.forEach(open) }
+                Button(tr("미리 보기")) { QuickLook.shared.toggle(items.map(\.url)) }
                     .keyboardShortcut(.space, modifiers: [])
-                Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
+                Button(tr("Finder에서 보기")) { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
                 if items.count == 1, items[0].isDirectory {
                     if model.places.isFavorite(items[0].url) {
-                        Button("즐겨찾기에서 제거") { model.places.removeFavorite(items[0].url) }
+                        Button(tr("즐겨찾기에서 제거")) { model.places.removeFavorite(items[0].url) }
                     } else {
-                        Button("즐겨찾기에 추가") { model.places.addFavorite(items[0].url) }
+                        Button(tr("즐겨찾기에 추가")) { model.places.addFavorite(items[0].url) }
                     }
                 }
                 Divider()
-                Button("Git 저장소로 복사 →") { sendToRepo(items, move: false) }
-                Button("Git 저장소로 이동 →") { sendToRepo(items, move: true) }
+                Button(tr("Git 저장소로 복사 →")) { sendToRepo(items, move: false) }
+                Button(tr("Git 저장소로 이동 →")) { sendToRepo(items, move: true) }
                 Divider()
-                Button("이름 변경…") { askRename(items[0]) }
+                Button(tr("이름 변경…")) { askRename(items[0]) }
                     .disabled(items.count != 1)
-                Button("휴지통으로 이동") { trash(items) }
+                Button(tr("휴지통으로 이동")) { trash(items) }
             }
         }
         .disabled(model.isBusy)
@@ -176,8 +174,8 @@ struct LocalPaneView: View {
         .overlay {
             switch dropTarget {
             case .none: EmptyView()
-            case .here: DropHighlight(text: "놓으면 여기로 복사")
-            case .folder(let url): DropHighlight(text: "‘\(url.lastPathComponent)’ 폴더에 놓기", full: false)
+            case .here: DropHighlight(text: tr("놓으면 여기로 복사"))
+            case .folder(let url): DropHighlight(text: tr("‘\(url.lastPathComponent)’ 폴더에 놓기"), full: false)
             }
         }
     }
@@ -185,7 +183,7 @@ struct LocalPaneView: View {
     private func searchBanner(count: Int) -> some View {
         HStack(spacing: 6) {
             if searching { ProgressView().controlSize(.mini) }
-            Text(searching ? "찾는 중…" : "‘\(query)’ \(count)개\(partial ? " · 일부만 찾았어요 (더 좁은 폴더에서 찾아 보세요)" : " · 하위 폴더 포함")")
+            Text(searching ? tr("찾는 중…") : tr("‘\(query)’ \(count)개\(partial ? tr(" · 일부만 찾았어요 (더 좁은 폴더에서 찾아 보세요)") : tr(" · 하위 폴더 포함"))"))
         }
         .font(.caption)
         .padding(.horizontal, 10)
@@ -203,7 +201,7 @@ struct LocalPaneView: View {
                                add: places.addFavorite,
                                remove: places.removeFavorite,
                                move: places.moveFavorites,
-                               resetLabel: "Finder 기본 구성으로 되돌리기",
+                               resetLabel: tr("Finder 기본 구성으로 되돌리기"),
                                reset: places.resetFavorites)
     }
 
@@ -247,30 +245,21 @@ struct LocalPaneView: View {
     }
 
     private func askNewFolder() {
-        nameRequest = NameRequest(title: "새 폴더", confirm: "만들기", initial: "새 폴더") { name in
+        nameRequest = NameRequest(title: tr("새 폴더"), confirm: tr("만들기"), initial: tr("새 폴더")) { name in
             do { try local.createFolder(name) } catch { model.errorMessage = error.localizedDescription }
         }
     }
 
     private func askRename(_ item: FileItem) {
-        nameRequest = NameRequest(title: "이름 변경", confirm: "변경", initial: item.name) { name in
+        nameRequest = NameRequest(title: tr("이름 변경"), confirm: tr("변경"), initial: item.name) { name in
             do { try local.rename(item, to: name) } catch { model.errorMessage = error.localizedDescription }
         }
     }
 
     /// 왼쪽 → 오른쪽 (Git 저장소 현재 폴더로)
     private func sendToRepo(_ items: [FileItem], move: Bool) {
-        guard !items.isEmpty, !model.isBusy, let repoDir = model.currentDir else { return }
-        let urls = items.map(\.url)
-        let conflicts = items.map(\.name).filter(existingNames(in: repoDir).contains)
-        let run = { Task { await model.upload(urls, removeLocalAfter: move) } }
-        if conflicts.isEmpty {
-            _ = run()
-        } else {
-            Log.info("upload", "같은 이름이 있어 덮어쓸지 묻는 중: \(conflicts.joined(separator: ", "))")
-            pending = PendingTransfer(title: "Git 저장소의 같은 이름 항목을 덮어쓸까요?", conflicts: conflicts,
-                                      note: "", perform: { _ = run() })
-        }
+        guard let plan = model.uploadPlan(items.map(\.url), removeLocalAfter: move) else { return }
+        pending = PendingTransfer.start(plan)
         selection.removeAll()
     }
 
@@ -287,7 +276,7 @@ struct LocalPaneView: View {
     /// folder: 놓은 폴더 (nil이면 지금 보고 있는 폴더)
     private func receive(_ urls: [URL], folder: URL?) {
         guard !model.isBusy else {
-            model.errorMessage = "다른 작업이 끝난 뒤 다시 시도하세요."
+            model.errorMessage = tr("다른 작업이 끝난 뒤 다시 시도하세요.")
             return
         }
         let dest = folder ?? local.dir
@@ -311,8 +300,8 @@ struct LocalPaneView: View {
             run()
         } else {
             Log.info("download", "같은 이름이 있어 덮어쓸지 묻는 중: \(conflicts.joined(separator: ", "))")
-            pending = PendingTransfer(title: "‘\(dest.lastPathComponent)’에 같은 이름이 있어요. 덮어쓸까요?",
-                                      conflicts: conflicts, note: "기존 항목은 휴지통으로 이동합니다.", perform: run)
+            pending = PendingTransfer(title: tr("‘\(dest.lastPathComponent)’에 같은 이름이 있어요. 덮어쓸까요?"),
+                                      conflicts: conflicts, note: tr("기존 항목은 휴지통으로 이동합니다."), perform: run)
         }
     }
 }

@@ -3,6 +3,9 @@ import AppKit
 
 // MARK: - 파일 목록 테이블 (양쪽 패널 공용)
 
+/// 키보드 초점이 있는 패널 (Tab으로 오간다)
+enum PaneID: Hashable { case local, repo }
+
 struct FileTable<MenuContent: View>: View {
     /// 끌기가 어느 패널에서 시작됐는지 기록할 이름
     let pane: String
@@ -12,7 +15,19 @@ struct FileTable<MenuContent: View>: View {
     let emptyHint: String
     let onOpen: (FileItem) -> Void
     let onDelete: ([FileItem]) -> Void
+    /// 키보드: Tab으로 반대쪽 패널, ⌘↑로 상위 폴더
+    var focus: FocusState<PaneID?>.Binding
+    let paneID: PaneID
+    let onParent: () -> Void
+    /// 이름 옆 상태 표시 (Git 쪽만)
+    var badge: (FileItem) -> FileBadge? = { _ in nil }
+    /// 아이콘 보기
+    var icons = false
     @ViewBuilder let menu: ([FileItem]) -> MenuContent
+
+    /// 글자를 치면 그 이름으로 시작하는 항목으로 (Finder와 같음)
+    @State private var typed = ""
+    @State private var typedAt = Date.distantPast
 
     /// 열 제목을 눌러 정렬. 폴더는 늘 위에.
     @State private var sortOrder = [KeyPathComparator(\FileItem.name, comparator: .localizedStandard)]
@@ -23,16 +38,45 @@ struct FileTable<MenuContent: View>: View {
     }
 
     var body: some View {
+        if icons {
+            FileGrid(pane: pane, rows: sorted, selection: $selection, onOpen: onOpen, onDelete: onDelete,
+                     badge: badge, menu: menu)
+                .focused(focus, equals: paneID)
+                .overlay { emptyOverlay }
+        } else {
+            tableView
+        }
+    }
+
+    @ViewBuilder private var emptyOverlay: some View {
+        if items.isEmpty {
+            VStack(spacing: 6) {
+                Text(emptyTitle).font(.headline)
+                Text(emptyHint).font(.callout).foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var tableView: some View {
         let rows = sorted
-        Table(of: FileItem.self, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("이름", value: \.name, comparator: .localizedStandard) { item in
+        return Table(of: FileItem.self, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn(tr("이름"), value: \.name, comparator: .localizedStandard) { item in
                 HStack(spacing: 6) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+                    Image(nsImage: IconCache.icon(for: item))
                         .resizable()
                         .frame(width: 16, height: 16)
                     Text(item.name).lineLimit(1).truncationMode(.middle)
+                    if let b = badge(item) {
+                        Image(systemName: b.symbol)
+                            .font(.caption)
+                            .foregroundStyle(b.color)
+                            .help(b.help)
+                            .accessibilityLabel(b.help)
+                    }
                     if let location = item.location {
-                        Text(location.isEmpty ? "· 이 폴더" : "· \(location)")
+                        Text(location.isEmpty ? tr("· 이 폴더") : "· \(location)")
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.head)
@@ -42,13 +86,13 @@ struct FileTable<MenuContent: View>: View {
                 .background { if item.isDirectory { DropFolderMarker(url: item.url) } }
             }
             .width(min: 140, ideal: 280)
-            TableColumn("크기", value: \.sortSize) { item in
+            TableColumn(tr("크기"), value: \.sortSize) { item in
                 Text(item.isDirectory ? "—" : ByteCountFormatter.string(fromByteCount: item.size ?? 0, countStyle: .file))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             .width(min: 50, ideal: 70, max: 110)
-            TableColumn("수정한 날짜", value: \.sortDate) { item in
+            TableColumn(tr("수정한 날짜"), value: \.sortDate) { item in
                 Text(item.modified?.formatted(date: .numeric, time: .shortened) ?? "")
                     .foregroundStyle(.secondary)
             }
@@ -75,6 +119,7 @@ struct FileTable<MenuContent: View>: View {
             if items.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "tray").font(.system(size: 30)).foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                     Text(emptyTitle).font(.headline)
                     Text(emptyHint).font(.callout).foregroundStyle(.secondary)
                 }
@@ -93,6 +138,42 @@ struct FileTable<MenuContent: View>: View {
             return .handled
         }
         .onChange(of: selection) { QuickLook.shared.follow(selectedURLs(in: rows)) }
+        .focused(focus, equals: paneID)
+        // Tab: 반대쪽 패널로
+        .onKeyPress(.tab) {
+            focus.wrappedValue = paneID == .local ? .repo : .local
+            return .handled
+        }
+        // Return: 열기 (폴더면 들어가기)
+        .onKeyPress(.return) {
+            let selected = rows.filter { selection.contains($0.id) }
+            guard !selected.isEmpty else { return .ignored }
+            selected.forEach(onOpen)
+            return .handled
+        }
+        // ⌘↑ 상위 폴더, ⌘↓ 열기, ⌘⌫ 삭제 (Finder와 같음)
+        .onKeyPress(keys: [.upArrow, .downArrow, .delete], phases: .down) { press in
+            guard press.modifiers == .command else { return .ignored }
+            let selected = rows.filter { selection.contains($0.id) }
+            switch press.key {
+            case .upArrow: onParent()
+            case .downArrow: selected.forEach(onOpen)
+            default: if !selected.isEmpty { onDelete(selected) }
+            }
+            return .handled
+        }
+        // 글자 치기: 그 글자로 시작하는 이름으로 이동
+        .onKeyPress(phases: .down) { press in
+            guard press.modifiers.isEmpty || press.modifiers == .shift,
+                  let ch = press.characters.first, ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-"
+            else { return .ignored }
+            typed = Date().timeIntervalSince(typedAt) > 1 ? press.characters : typed + press.characters
+            typedAt = Date()
+            if let hit = rows.first(where: { $0.name.lowercased().hasPrefix(typed.lowercased()) }) {
+                selection = [hit.id]
+            }
+            return .handled
+        }
     }
 
     /// 화면 순서대로 선택한 항목
@@ -217,13 +298,13 @@ struct NameSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(request.title).font(.headline)
-            TextField("이름", text: $text)
+            TextField(tr("이름"), text: $text)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 320)
                 .onSubmit(commit)
             HStack {
                 Spacer()
-                Button("취소") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(tr("취소")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(request.confirm, action: commit)
                     .keyboardShortcut(.defaultAction)
                     .disabled(FileOps.validateName(text) == nil)
@@ -247,7 +328,21 @@ struct PendingTransfer: Identifiable {
     let title: String
     let conflicts: [String]
     let note: String
+    var confirm = tr("덮어쓰기")
     let perform: () -> Void
+
+    /// 물어볼 게 없으면 바로 복사하고 nil, 있으면(같은 이름·비밀 파일·공개 저장소) 물어볼 내용을 돌려준다
+    static func start(_ plan: AppModel.TransferPlan) -> PendingTransfer? {
+        if plan.conflicts.isEmpty && !plan.mustAsk {
+            plan.run()
+            return nil
+        }
+        if !plan.mustAsk {
+            Log.info("transfer", "같은 이름이 있어 덮어쓸지 묻는 중: \(plan.conflicts.joined(separator: ", "))")
+        }
+        return PendingTransfer(title: plan.title, conflicts: plan.conflicts, note: plan.note,
+                               confirm: plan.confirm, perform: plan.run)
+    }
 }
 
 extension View {
@@ -257,7 +352,7 @@ extension View {
                            isPresented: Binding(get: { pending.wrappedValue != nil },
                                                 set: { if !$0 { pending.wrappedValue = nil } }),
                            presenting: pending.wrappedValue) { p in
-            Button("덮어쓰기", role: .destructive) { p.perform() }
+            Button(p.confirm, role: .destructive) { p.perform() }
         } message: { p in
             Text(p.conflicts.prefix(10).joined(separator: "\n") + (p.note.isEmpty ? "" : "\n\n" + p.note))
         }
@@ -399,7 +494,7 @@ final class FileDropView<Content: View>: NSView {
         setHighlight(nil)
         onTargetChange(.none)
         let types = sender.draggingPasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "-"
-        let place = marker.map { "‘\($0.url.lastPathComponent)’ 폴더" } ?? "지금 폴더"
+        let place = marker.map { tr("‘\($0.url.lastPathComponent)’ 폴더") } ?? tr("지금 폴더")
         Log.info("drop", "\(name) · \(place)에 \(urls.count)개 항목을 놓음\n" +
                  (urls.isEmpty ? "파일 URL 없음. 붙여넣기 형식: \(types)" : urls.map(\.path).joined(separator: "\n")))
         guard !urls.isEmpty, !operation.isEmpty else { return false }
@@ -486,6 +581,7 @@ struct SearchBox: View {
                 .onExitCommand { text = "" }
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .accessibilityLabel(tr("검색어 지우기"))
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
             }
@@ -503,4 +599,50 @@ struct SearchKey: Equatable {
     let query: String
     let dir: String
     let revision: Int
+}
+
+// MARK: - 폴더 트리 + 파일 목록 배치
+
+/// 패널 안의 폴더 트리와 파일 목록. stacked면 위아래, 아니면 좌우로 놓는다. 경계 위치는 배치별로 기억한다.
+struct TreeListSplit<Tree: View, List: View>: View {
+    let stacked: Bool
+    let showTree: Bool
+    let autosave: String
+    @ViewBuilder let tree: () -> Tree
+    @ViewBuilder let list: () -> List
+
+    var body: some View {
+        if stacked {
+            VSplitView {
+                if showTree {
+                    tree().frame(maxWidth: .infinity, minHeight: 80, idealHeight: 180, maxHeight: .infinity)
+                }
+                list()
+                    .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                    .splitAutosave(autosave + ".stacked", vertical: false)
+            }
+        } else {
+            HSplitView {
+                if showTree {
+                    tree().frame(minWidth: 140, idealWidth: 190, maxWidth: 360, maxHeight: .infinity)
+                }
+                list()
+                    .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+                    .splitAutosave(autosave, vertical: true)
+            }
+        }
+    }
+}
+
+/// 패널 머리글의 배치 바꾸기 단추 (좌우 ↔ 위아래)
+struct LayoutToggleButton: View {
+    @Binding var stacked: Bool
+
+    var body: some View {
+        Button { stacked.toggle() } label: {
+            Label(stacked ? tr("좌우로 놓기") : tr("위아래로 놓기"),
+                  systemImage: stacked ? "rectangle.split.2x1" : "rectangle.split.1x2")
+        }
+        .help(stacked ? tr("폴더 트리를 파일 목록 왼쪽으로") : tr("폴더 트리를 파일 목록 위로"))
+    }
 }

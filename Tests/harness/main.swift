@@ -174,6 +174,47 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         check(sh("git rev-list --count origin/main", in: clone) == "1", "commit만으로는 push하지 않음")
         try await repo.push()
         check(sh("git --git-dir=\(remote.path) rev-parse main", in: work) == sh("git rev-parse HEAD", in: clone), "push 한 번에 모두 올라감")
+
+        // 파일 상태
+        try "edited".write(to: clone.appendingPathComponent("other/note.txt"), atomically: true, encoding: .utf8)
+        var fileStatus = await repo.status()
+        check(fileStatus.files["other/note.txt"] == FileBadge.modified && fileStatus.folders["other"] == FileBadge.modified, "직접 고친 파일과 그 폴더 표시")
+        check(fileStatus.files["memo.txt"] == FileBadge.untracked, "Git에 없는 파일 표시")
+        try await repo.commitChanges(["other/note.txt"])
+        fileStatus = await repo.status()
+        check(fileStatus.files["other/note.txt"] == FileBadge.unpushed, "커밋했지만 안 올라간 파일 표시")
+        try await repo.push()
+
+        // 폴더 맞추기 (내 폴더 → Git)
+        let syncIn = work.appendingPathComponent("sync-in")
+        for name in ["new.txt", "sub/deep.txt", "diff.txt"] {
+            let u = syncIn.appendingPathComponent(name)
+            try fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try name.write(to: u, atomically: true, encoding: .utf8)
+        }
+        try await repo.syncIn(from: syncIn, files: ["new.txt", "sub/deep.txt", "diff.txt"], deletes: [], dir: "docs")
+        check(sh("git show --name-only --format= HEAD", in: clone).split(separator: "\n").count == 3, "맞추기는 한 커밋으로")
+
+        // 취소: 파일 여러 개를 올리다 멈추면 원래대로
+        let many = work.appendingPathComponent("many")
+        try fm.createDirectory(at: many, withIntermediateDirectories: true)
+        for i in 0..<400 { try Data(count: 64 * 1024).write(to: many.appendingPathComponent("f\(i).bin")) }
+        let before = sh("git rev-parse HEAD", in: clone)
+        let upload = Task { try await repo.upload([many], to: "") }
+        try? await Task.sleep(for: .milliseconds(30))
+        Cancellation.request()
+        do { try await upload.value; check(false, "취소하면 업로드가 멈춤") } catch is CancellationError {
+            check(true, "취소하면 업로드가 멈춤")
+        }
+        Cancellation.reset()
+        check(!fm.fileExists(atPath: clone.appendingPathComponent("many").path), "반쯤 복사된 것은 치움")
+        check(sh("git rev-parse HEAD", in: clone) == before, "커밋도 만들지 않음")
+
+        // GitHub 주소 (주소에 든 토큰은 빼고)
+        sh("git remote set-url origin https://me:ghp_secret123@github.com/owner/repo.git", in: clone)
+        let web = await repo.webBase()
+        check(web?.url == "https://github.com/owner/repo" && web?.branch == "main", "GitHub 주소 (\(web?.url ?? "-"))")
+        sh("git remote set-url origin \(remote.path)", in: clone)
     } catch { check(false, "Git 작업 실패: \(error)") }
 
     section("충돌")
@@ -218,15 +259,57 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         }
     } catch { check(false, "충돌 시험 실패: \(error)") }
 
+    section("올리기 전 안전 확인")
+    check(UploadSafety.isSensitive(".env") && UploadSafety.isSensitive(".env.production") && !UploadSafety.isSensitive(".env.example"), ".env 파일")
+    check(UploadSafety.isSensitive("id_ed25519") && !UploadSafety.isSensitive("id_ed25519.pub"), "SSH 키 (공개 키는 괜찮음)")
+    check(UploadSafety.isSensitive("server.pem") && UploadSafety.isSensitive("credentials.json") && !UploadSafety.isSensitive("보고서.pdf"), "인증서·자격 증명")
+    let secretDir = work.appendingPathComponent("secret-src/app")
+    try! fm.createDirectory(at: secretDir, withIntermediateDirectories: true)
+    try! "x".write(to: secretDir.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
+    try! "x".write(to: secretDir.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+    check(UploadSafety.sensitiveFiles(in: [secretDir]) == ["app/.env"], "폴더 안의 비밀 파일 찾기")
+
+    section("번역")
+    check(Loc.fill("Moved {} items to /{}", ["3", "docs"]) == "Moved 3 items to /docs", "{} 순서대로")
+    check(Loc.fill("{2} ← {1}", ["a", "b"]) == "b ← a", "{1} {2} 자리 지정")
+    check(tr("‘\("x")’ 폴더를 만들었습니다").contains("x"), "번역 없으면 원문에 값 채우기")
+
+    section("폴더 맞추기 비교")
+    let syncA = work.appendingPathComponent("sync-a"), syncB = work.appendingPathComponent("sync-b")
+    for (dir, files) in [(syncA, ["same.txt": "1", "diff.txt": "A", "new.txt": "n", "sub/deep.txt": "d"]),
+                         (syncB, ["same.txt": "1", "diff.txt": "B", "old.txt": "o"])] {
+        for (name, body) in files {
+            let u = dir.appendingPathComponent(name)
+            try! fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try! body.write(to: u, atomically: true, encoding: .utf8)
+        }
+    }
+    try! Data([1]).write(to: syncA.appendingPathComponent(".DS_Store"))
+    let plan = FolderSync.compare(from: syncA, to: syncB)
+    check(plan.added == ["new.txt", "sub/deep.txt"], "새로 보낼 파일 (\(plan.added))")
+    check(plan.changed == ["diff.txt"], "내용이 다른 파일 (크기가 같아도)")
+    check(plan.extra == ["old.txt"], "받는 쪽에만 있는 파일")
+
     section("검색")
     let found = await FileItem.search("txt", in: clone, includeHidden: true, alwaysHidden: AppModel.repoHidden)
-    check(Set(found.items.map(\.name)) == ["memo.txt", "note.txt"] && !found.partial, "작은 폴더 검색 (\(found.items.map(\.name).sorted()))")
+    check(Set(found.items.map(\.name)).isSuperset(of: ["memo.txt", "note.txt", "deep.txt"]) && !found.partial, "작은 폴더 검색 (\(found.items.map(\.name).sorted()))")
     let start = Date()
     let task = Task { await FileItem.search("e", in: URL(fileURLWithPath: "/"), includeHidden: true, alwaysHidden: []) }
     try? await Task.sleep(for: .milliseconds(100))
     task.cancel()
     let cancelled = await task.value
     check(Date().timeIntervalSince(start) < 1 && cancelled.partial, "검색어가 바뀌면 바로 멈춤")
+
+    section("폴더 지켜보기")
+    let watchDir = work.appendingPathComponent("watch")
+    try! fm.createDirectory(at: watchDir, withIntermediateDirectories: true)
+    var fired = 0
+    let watcher = FolderWatcher { fired += 1 }
+    watcher.watch(watchDir)
+    try! "x".write(to: watchDir.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+    for _ in 0..<30 where fired == 0 { try? await Task.sleep(for: .milliseconds(50)) }
+    check(fired == 1, "폴더에 파일이 생기면 알림 (\(fired)번)")
+    watcher.stop()
 
     section("목록 읽기")
     let browser = LocalBrowser()

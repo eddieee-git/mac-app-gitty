@@ -17,6 +17,7 @@ lipo -create -output "$app/Contents/MacOS/Gitty" \
     .build/x86_64-apple-macosx/release/Gitty
 cp Resources/Info.plist "$app/Contents/Info.plist"
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+cp Resources/en.json "$app/Contents/Resources/en.json"   # 영어 화면 번역 (scripts/l10n.py keys로 빠진 번역 확인)
 
 # 임시 서명. 서명 조건을 번들 ID로 지정해서 다시 빌드해도 같은 앱으로 인식되게 한다.
 codesign --force --sign - -r='designated => identifier "com.eddieee.Gitty"' "$app"

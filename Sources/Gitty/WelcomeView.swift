@@ -15,7 +15,7 @@ struct WelcomeView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.tint)
                 Text("Gitty").font(.largeTitle.bold())
-                Text("Git 저장소를 파일 관리자처럼 다루세요")
+                Text(tr("Git 저장소를 파일 관리자처럼 다루세요"))
                     .foregroundStyle(.secondary)
             }
 
@@ -27,7 +27,7 @@ struct WelcomeView: View {
                 Button {
                     showClone = true
                 } label: {
-                    Label("GitHub 저장소 열기…", systemImage: "arrow.down.circle")
+                    Label(tr("GitHub 저장소 열기…"), systemImage: "arrow.down.circle")
                         .frame(minWidth: 180)
                 }
                 .controlSize(.large)
@@ -36,15 +36,16 @@ struct WelcomeView: View {
                 Button {
                     chooseLocalClone()
                 } label: {
-                    Label("로컬 클론 열기…", systemImage: "folder")
+                    Label(tr("로컬 클론 열기…"), systemImage: "folder")
                         .frame(minWidth: 180)
                 }
                 .controlSize(.large)
             }
+            .disabled(model.isBusy)
 
             if !model.recents.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("최근 저장소").font(.headline)
+                    Text(tr("최근 저장소")).font(.headline)
                     List(model.recents, id: \.self, selection: $selectedRecent) { url in
                         HStack {
                             Image(systemName: "folder.fill").foregroundStyle(.tint)
@@ -56,7 +57,7 @@ struct WelcomeView: View {
                             if opening == url {
                                 ProgressView().controlSize(.small)
                             } else {
-                                Button("열기") { openRecent(url) }
+                                Button(tr("열기")) { openRecent(url) }
                                     .controlSize(.small)
                             }
                         }
@@ -65,30 +66,32 @@ struct WelcomeView: View {
                     // 더블클릭·Return은 macOS 목록의 기본 동작(primaryAction)으로 받는다. 줄 어디를 눌러도 된다.
                     .contextMenu(forSelectionType: URL.self) { urls in
                         if let url = urls.first {
-                            Button("열기") { openRecent(url) }
-                            Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            Button(tr("열기")) { openRecent(url) }
+                            Button(tr("Finder에서 보기")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                             Divider()
-                            Button("목록에서 제거") { model.removeRecent(url) }
+                            Button(tr("목록에서 제거")) { model.removeRecent(url) }
                         }
                     } primaryAction: { urls in
                         if let url = urls.first { openRecent(url) }
                     }
                     .listStyle(.bordered(alternatesRowBackgrounds: true))
                     .frame(maxWidth: 520, maxHeight: 220)
-                    Text("더블클릭, Return 키, 또는 열기 버튼으로 열어요").font(.caption).foregroundStyle(.secondary)
+                    Text(tr("더블클릭, Return 키, 또는 열기 버튼으로 열어요")).font(.caption).foregroundStyle(.secondary)
                 }
+                .disabled(model.isBusy)
             }
 
             if let busy = model.busyMessage {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(busy).foregroundStyle(.secondary)
+                    Button(tr("취소")) { model.cancelCurrent() }
+                        .controlSize(.small)
                 }
             }
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .disabled(model.isBusy)
         .sheet(isPresented: $showClone) {
             CloneSheet()
         }
@@ -118,7 +121,7 @@ struct WelcomeView: View {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.message = "git 저장소(클론) 폴더를 선택하세요"
+        panel.message = tr("git 저장소(클론) 폴더를 선택하세요")
         if panel.runModal() == .OK, let url = panel.url {
             Task { await model.open(url) }
         }
@@ -144,17 +147,17 @@ struct CloneSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("GitHub 저장소 열기").font(.title2.bold())
-            TextField("owner/repo 또는 저장소 URL — 목록에서 검색", text: $query)
+            Text(tr("GitHub 저장소 열기")).font(.title2.bold())
+            TextField(tr("owner/repo 또는 저장소 URL — 목록에서 검색"), text: $query)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(openSelected)
 
             Group {
                 if loading {
-                    ProgressView("저장소 목록을 불러오는 중…")
+                    ProgressView(tr("저장소 목록을 불러오는 중…"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if repos.isEmpty {
-                    Text("gh CLI로 목록을 불러올 수 없습니다.\n위에 owner/repo 를 직접 입력하세요.")
+                    Text(tr("gh CLI로 목록을 불러올 수 없습니다.\n위에 owner/repo 를 직접 입력하세요."))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -174,11 +177,11 @@ struct CloneSheet: View {
             .frame(height: 300)
 
             HStack {
-                Text("처음 열 때 \(AppModel.reposDirectory.path)에 클론됩니다")
+                Text(tr("처음 열 때 \(AppModel.reposDirectory.path)에 클론됩니다"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 Spacer()
-                Button("취소") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("열기", action: openSelected)
+                Button(tr("취소")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(tr("열기"), action: openSelected)
                     .keyboardShortcut(.defaultAction)
                     .disabled(selection == nil && query.trimmed.isEmpty)
             }

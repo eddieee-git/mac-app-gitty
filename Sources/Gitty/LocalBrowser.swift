@@ -19,6 +19,11 @@ final class LocalBrowser {
     /// 폴더를 읽지 못한 이유 (권한 등). 읽었으면 nil.
     private(set) var loadError: String?
     @ObservationIgnored private var loadToken = 0
+    /// 지금 폴더를 지켜보다 바뀌면 다시 읽는다
+    @ObservationIgnored private lazy var watcher = FolderWatcher { [weak self] in
+        guard let self, !self.loading else { return }
+        self.reload()
+    }
     /// 다시 읽을 때마다 올라간다. 폴더 트리가 이 값을 보고 새로 그린다.
     private(set) var revision = 0
     nonisolated static let alwaysHidden: Set<String> = [".DS_Store"]
@@ -42,7 +47,7 @@ final class LocalBrowser {
         let homePath = Self.home.standardizedFileURL.path
         if path == homePath || path.hasPrefix(homePath + "/") {
             let rest = String(path.dropFirst(homePath.count)).split(separator: "/").map(String.init)
-            return (Self.home, "홈", "house.fill", rest)
+            return (Self.home, tr("홈"), "house.fill", rest)
         }
         let rest = path.split(separator: "/").map(String.init)
         return (URL(fileURLWithPath: "/"), "Macintosh HD", "internaldrive.fill", rest)
@@ -91,6 +96,7 @@ final class LocalBrowser {
             loadError = error
             loading = false
             revision += 1
+            watcher.watch(dir)
         }
         // 오래 걸리면 이전 폴더 내용을 치우고 "불러오는 중"을 보여 준다
         if changedDir {
@@ -116,7 +122,7 @@ final class LocalBrowser {
         guard let name = FileOps.validateName(name) else { return }
         let url = dir.appendingPathComponent(name)
         guard !FileManager.default.fileExists(atPath: url.path) else {
-            throw GittyError(message: "같은 이름의 항목이 이미 있습니다: \(name)")
+            throw GittyError(message: tr("같은 이름의 항목이 이미 있습니다: \(name)"))
         }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
         reload()

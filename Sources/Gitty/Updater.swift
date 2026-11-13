@@ -90,7 +90,7 @@ final class Updater {
             let current = Self.currentVersion
             guard Self.isNewer(release.version, than: current) else {
                 Log.info("update", "최신 버전이에요 (지금 \(current), 릴리스 \(release.version))")
-                if manual { notice = "지금 쓰는 \(current)가 최신 버전이에요." }
+                if manual { notice = tr("지금 쓰는 \(current)가 최신 버전이에요.") }
                 return
             }
             Log.info("update", "새 버전 \(release.version)이 있어요 (지금 \(current))")
@@ -104,7 +104,7 @@ final class Updater {
             }
         } catch {
             Log.error("update", "업데이트 확인 실패: \(error.localizedDescription)")
-            if manual { notice = "업데이트를 확인하지 못했어요.\n\(error.localizedDescription)" }
+            if manual { notice = tr("업데이트를 확인하지 못했어요.\n\(error.localizedDescription)") }
         }
     }
 
@@ -118,16 +118,16 @@ final class Updater {
         request.timeoutInterval = 20
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw GittyError(message: "GitHub 응답 \(http.statusCode)")
+            throw GittyError(message: tr("GitHub 응답 \(http.statusCode)"))
         }
         struct Asset: Decodable { let name: String; let browser_download_url: URL }
         struct Payload: Decodable { let tag_name: String; let body: String?; let html_url: URL; let assets: [Asset] }
         let payload = try JSONDecoder().decode(Payload.self, from: data)
         guard let dmg = payload.assets.first(where: { $0.name.hasSuffix(".dmg") }) else {
-            throw GittyError(message: "릴리스 \(payload.tag_name)에 dmg가 없어요")
+            throw GittyError(message: tr("릴리스 \(payload.tag_name)에 dmg가 없어요"))
         }
         guard let signature = payload.assets.first(where: { $0.name == dmg.name + ".sig" }) else {
-            throw GittyError(message: "릴리스 \(payload.tag_name)에 서명 파일이 없어서 받지 않아요")
+            throw GittyError(message: tr("릴리스 \(payload.tag_name)에 서명 파일이 없어서 받지 않아요"))
         }
         let version = payload.tag_name.hasPrefix("v") ? String(payload.tag_name.dropFirst()) : payload.tag_name
         return Release(version: version, notes: payload.body ?? "", dmgURL: dmg.browser_download_url,
@@ -214,10 +214,10 @@ final class Updater {
             let task = URLSession.shared.downloadTask(with: release.dmgURL) { location, response, error in
                 if let error { continuation.resume(throwing: error); return }
                 if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                    continuation.resume(throwing: GittyError(message: "내려받기 응답 \(http.statusCode)")); return
+                    continuation.resume(throwing: GittyError(message: tr("내려받기 응답 \(http.statusCode)"))); return
                 }
                 guard let location else {
-                    continuation.resume(throwing: GittyError(message: "내려받은 파일이 없어요")); return
+                    continuation.resume(throwing: GittyError(message: tr("내려받은 파일이 없어요"))); return
                 }
                 do {
                     try? FileManager.default.removeItem(at: dest)
@@ -250,22 +250,22 @@ final class Updater {
     static func verifySignature(of dmg: URL, release: Release,
                                 publicKey: Curve25519.Signing.PublicKey? = bundledPublicKey) async throws {
         guard let publicKey else {
-            throw GittyError(message: "이 앱에는 업데이트 확인용 공개 키가 없어요")
+            throw GittyError(message: tr("이 앱에는 업데이트 확인용 공개 키가 없어요"))
         }
         var request = URLRequest(url: release.signatureURL)
         request.timeoutInterval = 20
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw GittyError(message: "서명 파일 응답 \(http.statusCode)")
+            throw GittyError(message: tr("서명 파일 응답 \(http.statusCode)"))
         }
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let signature = Data(base64Encoded: text) else {
-            throw GittyError(message: "서명 파일 형식이 잘못됐어요")
+            throw GittyError(message: tr("서명 파일 형식이 잘못됐어요"))
         }
         let content = try Data(contentsOf: dmg, options: .mappedIfSafe)
         guard publicKey.isValidSignature(signature, for: content) else {
             Log.error("update", "\(release.version) 서명이 맞지 않아 버림: \(release.dmgURL.absoluteString)")
-            throw GittyError(message: "내려받은 파일의 서명이 맞지 않아요. 변조됐을 수 있어서 설치하지 않았어요.")
+            throw GittyError(message: tr("내려받은 파일의 서명이 맞지 않아요. 변조됐을 수 있어서 설치하지 않았어요."))
         }
     }
 
@@ -276,7 +276,7 @@ final class Updater {
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
         let attach = await Shell.run("/usr/bin/hdiutil",
                                      ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path])
-        guard attach.status == 0 else { throw GittyError(message: "dmg를 열 수 없어요: \(attach.errorText)") }
+        guard attach.status == 0 else { throw GittyError(message: tr("dmg를 열 수 없어요: \(attach.errorText)")) }
         defer {
             Task.detached { _ = await Shell.run("/usr/bin/hdiutil", ["detach", "-force", mount.path]) }
         }
@@ -284,19 +284,19 @@ final class Updater {
         let source = mount.appendingPathComponent("Gitty.app")
         guard let info = NSDictionary(contentsOf: source.appendingPathComponent("Contents/Info.plist")),
               info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier else {
-            throw GittyError(message: "dmg 안에서 Gitty를 찾지 못했어요")
+            throw GittyError(message: tr("dmg 안에서 Gitty를 찾지 못했어요"))
         }
         guard info["CFBundleShortVersionString"] as? String == version else {
-            throw GittyError(message: "dmg 안의 버전이 \(version)이 아니에요")
+            throw GittyError(message: tr("dmg 안의 버전이 \(version)이 아니에요"))
         }
 
         let staged = cacheDir.appendingPathComponent("staged/Gitty.app")
         try? fm.removeItem(at: staged.deletingLastPathComponent())
         try fm.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
         let copy = await Shell.run("/usr/bin/ditto", [source.path, staged.path])
-        guard copy.status == 0 else { throw GittyError(message: "앱을 복사하지 못했어요: \(copy.errorText)") }
+        guard copy.status == 0 else { throw GittyError(message: tr("앱을 복사하지 못했어요: \(copy.errorText)")) }
         let verify = await Shell.run("/usr/bin/codesign", ["--verify", "--deep", staged.path])
-        guard verify.status == 0 else { throw GittyError(message: "새 앱의 서명을 확인하지 못했어요: \(verify.errorText)") }
+        guard verify.status == 0 else { throw GittyError(message: tr("새 앱의 서명을 확인하지 못했어요: \(verify.errorText)")) }
         return staged
     }
 
@@ -306,6 +306,7 @@ final class Updater {
     func installStagedOnQuit(relaunch: Bool) {
         guard let stagedApp, let staged, FileManager.default.fileExists(atPath: stagedApp.path) else { return }
         let target = Bundle.main.bundleURL.path
+        // no-tr: 셸 스크립트라 번역하지 않는다
         let script = """
         exec >>"$5" 2>&1
         log() { echo "$(date '+%Y-%m-%d %H:%M:%S.000') INFO [update] $1"; }

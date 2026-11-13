@@ -25,13 +25,13 @@ struct LogPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Label("진행 로그", systemImage: "text.alignleft")
+                Label(tr("진행 로그"), systemImage: "text.alignleft")
                     .font(.callout.weight(.semibold))
                 Spacer()
-                Toggle("git 명령", isOn: $showGit)
-                Toggle("오류만", isOn: $onlyErrors)
-                Button("지우기") { feed.clear() }
-                Button("전체 기록…") { openWindow(id: "log") }
+                Toggle(tr("git 명령"), isOn: $showGit)
+                Toggle(tr("오류만"), isOn: $onlyErrors)
+                Button(tr("지우기")) { feed.clear() }
+                Button(tr("전체 기록…")) { openWindow(id: "log") }
             }
             .toggleStyle(.checkbox)
             .controlSize(.small)
@@ -51,7 +51,7 @@ struct LogPanel: View {
                 }
                 .overlay {
                     if shown.isEmpty {
-                        Text("파일을 올리거나 내려받으면 진행 상황이 여기에 보여요")
+                        Text(tr("파일을 올리거나 내려받으면 진행 상황이 여기에 보여요"))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -91,14 +91,14 @@ struct LogPanel: View {
 
     private static func label(for category: String) -> String {
         switch category {
-        case "upload": "업로드"
-        case "download": "내려받기"
-        case "drop": "놓기"
-        case "commit": "커밋"
+        case "upload": tr("업로드")
+        case "download": tr("내려받기")
+        case "drop": tr("놓기")
+        case "commit": tr("커밋")
         case "push": "push"
-        case "repo": "저장소"
-        case "clone": "클론"
-        case "app": "앱"
+        case "repo": tr("저장소")
+        case "clone": tr("클론")
+        case "app": tr("앱")
         default: category
         }
     }

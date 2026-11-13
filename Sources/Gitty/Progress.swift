@@ -75,13 +75,13 @@ final class ProgressReporter: @unchecked Sendable {
         let name = String(line[nameRange])
         let phase: String
         switch name.lowercased() {
-        case "writing objects": phase = "push 중"
-        case "compressing objects": phase = "압축 중"
-        case "receiving objects": phase = "받는 중"
-        case "resolving deltas": phase = "정리 중"
-        case "uploading lfs objects": phase = "LFS 업로드 중"
-        case "downloading lfs objects", "filtering content": phase = "LFS 받는 중"
-        case "counting objects", "enumerating objects": phase = "준비 중"
+        case "writing objects": phase = tr("push 중")
+        case "compressing objects": phase = tr("압축 중")
+        case "receiving objects": phase = tr("받는 중")
+        case "resolving deltas": phase = tr("정리 중")
+        case "uploading lfs objects": phase = tr("LFS 업로드 중")
+        case "downloading lfs objects", "filtering content": phase = tr("LFS 받는 중")
+        case "counting objects", "enumerating objects": phase = tr("준비 중")
         default: phase = name
         }
         var detail = Range(m.range(at: 3), in: line).map { String(line[$0]) } ?? ""
