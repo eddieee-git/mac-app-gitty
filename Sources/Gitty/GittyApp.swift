@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Quartz
 
 @main
 struct GittyApp: App {
@@ -81,6 +82,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    // Quick Look 미리 보기 창이 응답 체인에서 데이터 소스를 찾을 때 여기까지 온다
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { QuickLook.shared.attach(panel) }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
 }
 
 struct ContentView: View {

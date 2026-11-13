@@ -128,6 +128,48 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         check(sh("git --git-dir=\(remote.path) rev-parse main", in: work) == sh("git rev-parse HEAD", in: clone), "push 한 번에 모두 올라감")
     } catch { check(false, "Git 작업 실패: \(error)") }
 
+    section("충돌")
+    check(GitRepo.copyName(for: "docs/a.txt", existing: { _ in false }) == "docs/a (원격).txt", "복사본 이름")
+    check(GitRepo.copyName(for: "README", existing: { $0 == "README (원격)" }) == "README (원격 2)", "복사본 이름이 겹치면 번호")
+    sh("git init -q --bare -b main c-remote.git && git clone -q c-remote.git c-mine && cd c-mine && printf 'base' > a.txt && printf 'base' > b.txt && printf 'base' > gone.txt && git add -A && git -c user.name=t -c user.email=t@t commit -q -m base && git push -q -u origin main && cd .. && git clone -q c-remote.git c-other && cd c-other && printf 'theirs' > a.txt && printf 'theirs' > b.txt && printf 'theirs' > gone.txt && git -c user.name=o -c user.email=o@o commit -qam other && git push -q", in: work)
+    let mineDir = work.appendingPathComponent("c-mine")
+    let mine = GitRepo(root: mineDir)
+    await mine.prepareIdentity()
+    func content(_ name: String) -> String? { try? String(contentsOf: mineDir.appendingPathComponent(name), encoding: .utf8) }
+    do {
+        try "mine".write(to: mineDir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try "mine".write(to: mineDir.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        try await mine.delete(["gone.txt"])
+        sh("cd c-mine && git -c user.name=t -c user.email=t@t commit -qam mine", in: work)
+        do {
+            try await mine.pull()
+            check(false, "충돌을 알아챔")
+        } catch let conflict as MergeConflictError {
+            check(conflict.files.map(\.path).sorted() == ["a.txt", "b.txt", "gone.txt"], "충돌한 파일 3개 (\(conflict.files.map(\.path)))")
+            check(conflict.files.first { $0.path == "gone.txt" }?.mine == nil, "내 쪽에서 지운 것을 앎")
+            let waiting = await mine.mergeInProgress()
+            check(waiting, "합치기가 열린 채로 기다림")
+            try await mine.resolveConflicts(["a.txt": .mine, "b.txt": .both, "gone.txt": .theirs])
+            check(content("a.txt") == "mine", "내 것 남기기")
+            check(content("b.txt") == "mine" && content("b (원격).txt") == "theirs", "둘 다 남기기")
+            check(content("gone.txt") == "theirs", "원격 것 남기기 (지운 파일 살리기)")
+            let stillOpen = await mine.mergeInProgress()
+            check(!stillOpen, "합치기 마무리됨")
+            try await mine.push()
+            check(sh("git --git-dir=c-remote.git log -1 --format=%P main", in: work).split(separator: " ").count == 2, "합친 커밋이 올라감")
+        }
+
+        // 나중에: 합치기를 그만두면 내 쪽 그대로
+        sh("cd c-other && git pull -q && printf 'again' > a.txt && git -c user.name=o -c user.email=o@o commit -qam again && git push -q", in: work)
+        try "mine2".write(to: mineDir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        sh("cd c-mine && git -c user.name=t -c user.email=t@t commit -qam mine2", in: work)
+        do { try await mine.pull() } catch is MergeConflictError {
+            await mine.abortMerge()
+            let open = await mine.mergeInProgress()
+            check(content("a.txt") == "mine2" && !open, "나중에: 내 쪽 그대로 두고 그만둠")
+        }
+    } catch { check(false, "충돌 시험 실패: \(error)") }
+
     section("검색")
     let found = await FileItem.search("txt", in: clone, includeHidden: true, alwaysHidden: AppModel.repoHidden)
     check(Set(found.items.map(\.name)) == ["memo.txt", "note.txt"] && !found.partial, "작은 폴더 검색 (\(found.items.map(\.name).sorted()))")

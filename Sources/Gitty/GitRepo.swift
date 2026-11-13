@@ -19,6 +19,27 @@ struct FileVersion: Identifiable, Sendable, Hashable {
     var shortHash: String { String(hash.prefix(7)) }
 }
 
+/// 원격과 같은 파일을 서로 다르게 바꿔서 합치지 못한 파일
+struct ConflictFile: Identifiable, Sendable, Hashable {
+    let path: String
+    /// 내 쪽(이 Mac)의 내용 (지웠으면 nil)
+    let mine: String?
+    /// 원격 쪽 내용 (지웠으면 nil)
+    let theirs: String?
+    var id: String { path }
+    var name: String { (path as NSString).lastPathComponent }
+}
+
+enum ConflictChoice: String, Sendable, CaseIterable {
+    case mine, theirs, both
+}
+
+/// pull 중 충돌: 합치기(merge)를 열어 둔 채로 던진다. 사용자가 고르면 resolveConflicts로 마무리한다.
+struct MergeConflictError: LocalizedError {
+    let files: [ConflictFile]
+    var errorDescription: String? { "원격 변경과 충돌한 파일이 \(files.count)개 있어요." }
+}
+
 actor GitRepo {
     let root: URL
     /// 마지막으로 commit()이 만든 커밋. AppModel이 가져가서 되돌리기 목록에 넣는다.
@@ -208,10 +229,99 @@ actor GitRepo {
 
         reporter?.begin("원격에서 받는 중")
         let r = await result(["pull", "--progress", "--rebase", "--autostash", "origin", branch], streaming: true)
-        if r.status != 0 {
-            _ = await result(["rebase", "--abort"])
-            throw GittyError(message: "원격 변경사항과 충돌했습니다.\n\(r.errorText)")
+        guard r.status != 0 else { return }
+        _ = await result(["rebase", "--abort"], probe: true)
+
+        // rebase로 안 되면 합치기(merge)로 다시 시도해서, 충돌한 파일을 사용자에게 물어본다
+        let merge = await result(["merge", "--no-ff", "--no-edit", "origin/\(branch)"])
+        if merge.status == 0 { return }   // 자동으로 합쳐짐
+        let files = await conflicts()
+        if files.isEmpty {
+            _ = await result(["merge", "--abort"], probe: true)
+            throw GittyError(message: "원격 변경을 받지 못했어요.\n\(r.errorText)\n\(merge.errorText)")
         }
+        Log.info("conflict", "원격과 충돌: " + files.map(\.path).joined(separator: ", "))
+        throw MergeConflictError(files: files)
+    }
+
+    // MARK: - 충돌
+
+    func mergeInProgress() async -> Bool {
+        await result(["rev-parse", "-q", "--verify", "MERGE_HEAD"], probe: true).status == 0
+    }
+
+    /// 합치지 못한 파일들. ls-files -u: "<mode> <blob> <stage>\t<path>" (2 = 내 쪽, 3 = 원격)
+    func conflicts() async -> [ConflictFile] {
+        let out = await result(["ls-files", "-u", "-z"], probe: true).stdout
+        var stages: [String: [Int: String]] = [:]
+        var order: [String] = []
+        for record in out.split(separator: "\0") {
+            let parts = record.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let meta = parts[0].split(separator: " ")
+            guard meta.count == 3, let stage = Int(meta[2]) else { continue }
+            let path = String(parts[1])
+            if stages[path] == nil { order.append(path) }
+            stages[path, default: [:]][stage] = String(meta[1])
+        }
+        return order.map { ConflictFile(path: $0, mine: stages[$0]?[2], theirs: stages[$0]?[3]) }
+    }
+
+    /// 고른 대로 파일을 정리하고 합치기를 마무리한다 (push는 따로)
+    func resolveConflicts(_ choices: [String: ConflictChoice]) async throws {
+        let fm = FileManager.default
+        var touched: [String] = []
+        for file in await conflicts() {
+            let target = url(for: file.path)
+            let choice = choices[file.path] ?? .both
+            touched.append(file.path)
+            func write(_ blob: String?, to dest: URL) async throws {
+                guard let blob else { try? fm.removeItem(at: dest); return }
+                try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let r = await result(["cat-file", "--filters", "--path=\(file.path)", blob], stdoutTo: dest)
+                guard r.status == 0 else { throw GittyError(message: "\(file.path)을(를) 꺼내지 못했어요.\n\(r.errorText)") }
+            }
+            switch choice {
+            case .mine:
+                try await write(file.mine, to: target)
+            case .theirs:
+                try await write(file.theirs, to: target)
+            case .both:
+                if file.mine != nil, file.theirs != nil {
+                    try await write(file.mine, to: target)
+                    let copy = Self.copyName(for: file.path, existing: { fm.fileExists(atPath: self.url(for: $0).path) })
+                    try await write(file.theirs, to: url(for: copy))
+                    touched.append(copy)
+                } else {
+                    // 한쪽에서 지웠으면 남아 있는 쪽을 살린다
+                    try await write(file.mine ?? file.theirs, to: target)
+                }
+            }
+        }
+        try await git(["--literal-pathspecs", "add", "-A", "--"] + touched)
+        try await git(["commit", "-q", "--no-edit"])
+        Log.info("conflict", "충돌 해결: " + choices.map { "\($0.key)=\($0.value.rawValue)" }.sorted().joined(separator: ", "))
+    }
+
+    /// "사진/a.txt" → "사진/a (원격).txt" (이미 있으면 "a (원격 2).txt")
+    static func copyName(for path: String, existing: (String) -> Bool) -> String {
+        let dir = (path as NSString).deletingLastPathComponent
+        let file = (path as NSString).lastPathComponent
+        let ext = (file as NSString).pathExtension
+        let base = ext.isEmpty ? file : (file as NSString).deletingPathExtension
+        var n = 1
+        while true {
+            let name = "\(base) (원격\(n == 1 ? "" : " \(n)"))" + (ext.isEmpty ? "" : ".\(ext)")
+            let candidate = dir.isEmpty ? name : "\(dir)/\(name)"
+            if !existing(candidate) { return candidate }
+            n += 1
+        }
+    }
+
+    /// 충돌을 풀지 않고 원격 변경 받기를 그만둔다 (내 쪽 상태로 돌아감)
+    func abortMerge() async {
+        _ = await result(["merge", "--abort"])
+        Log.info("conflict", "충돌 해결을 취소하고 합치기를 그만둠")
     }
 
     func push() async throws {

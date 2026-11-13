@@ -47,6 +47,9 @@ final class AppModel {
         let label: String
     }
     private(set) var undoStack: [UndoEntry] = []
+
+    /// 원격과 충돌해서 사용자가 골라야 하는 파일 (합치기가 열려 있는 동안)
+    private(set) var conflicts: [ConflictFile]?
     var undoLabel: String? { undoStack.last?.label }
 
     /// 앱 종료 때 남은 push를 마저 하기 위해 (AppDelegate에서 씀)
@@ -88,9 +91,20 @@ final class AppModel {
         root = url
         repoFavorites.load(root: url)
         undoStack = []
+        conflicts = nil
         repoName = await repo.displayName()
         path = []
         addRecent(url)
+        // 지난번에 충돌을 풀다 말고 닫았으면 그것부터
+        if await repo.mergeInProgress() {
+            await repo.prepareIdentity()
+            let files = await repo.conflicts()
+            if !files.isEmpty {
+                conflicts = files
+                statusMessage = "원격과 충돌한 파일이 있어요"
+                return
+            }
+        }
         let ok = await perform("원격과 동기화 중…", done: "최신 상태입니다") {
             await repo.prepareIdentity()
             await repo.prepareExcludes()
@@ -124,6 +138,7 @@ final class AppModel {
         repo = nil
         root = nil
         undoStack = []
+        conflicts = nil
         repoFavorites.load(root: nil)
         items = []
         statusMessage = ""
@@ -280,7 +295,7 @@ final class AppModel {
             return
         }
         guard let path = repoRelativePath(item.url) else { return }
-        await perform("이름 변경 중…", done: "이름을 \(newName)(으)로 변경했습니다", undoable: true) {
+        await perform("이름 변경 중…", done: "이름을 ‘\(newName)’(으)로 바꿨습니다", undoable: true) {
             try await repo.rename(path, to: newName)
         }
     }
@@ -294,7 +309,7 @@ final class AppModel {
             return
         }
         let path = relativeDir.isEmpty ? name : "\(relativeDir)/\(name)"
-        await perform("폴더 만드는 중…", done: "\(name) 폴더를 만들었습니다", undoable: true) {
+        await perform("폴더 만드는 중…", done: "‘\(name)’ 폴더를 만들었습니다", undoable: true) {
             try await repo.createFolder(path)
         }
     }
@@ -389,6 +404,30 @@ final class AppModel {
         }
     }
 
+    // MARK: - 충돌
+
+    /// 고른 대로 충돌을 풀고 올린다
+    func resolveConflicts(_ choices: [String: ConflictChoice]) async {
+        guard let repo, conflicts != nil else { return }
+        let count = choices.count
+        conflicts = nil
+        let ok = await perform("충돌 정리하는 중…", done: "충돌한 파일 \(count)개를 정리했어요", allowDuringConflict: true) {
+            try await repo.resolveConflicts(choices)
+            await repo.prepareLFS()
+            try await repo.push()
+        }
+        if ok { lastSynced = Date() }
+    }
+
+    /// 충돌을 풀지 않고 원격 변경 받기를 그만둔다. 다음 동기화 때 다시 묻는다.
+    func cancelConflicts() async {
+        guard let repo else { return }
+        await repo.abortMerge()
+        conflicts = nil
+        statusMessage = "원격 변경을 받지 않았어요. 동기화하면 다시 물어요"
+        reload()
+    }
+
     // MARK: - push 모으기
 
     /// 작업이 끝날 때마다 불러, 잠깐 기다렸다가 한 번에 push한다. 그사이 다른 작업이 오면 다시 기다린다.
@@ -412,6 +451,7 @@ final class AppModel {
     func flushPush() async {
         guard pushPending, let repo else { cancelScheduledPush(); return }
         if isBusy { schedulePush(); return }
+        if conflicts != nil { cancelScheduledPush(); return }   // 충돌을 정리하면서 함께 올린다
         cancelScheduledPush()
         await perform("GitHub에 올리는 중…", done: "") {
             try await repo.push()
@@ -449,9 +489,14 @@ final class AppModel {
     /// pushAfter: 성공하면 잠깐 뒤 push (연달아 한 작업은 한 번에)
     /// undoable: 만든 커밋을 되돌리기 목록에 넣는다 (pushAfter 포함)
     private func perform(_ label: String, done: String, quiet: Bool = false, pushAfter: Bool = false,
-                         undoable: Bool = false, _ op: @escaping () async throws -> Void) async -> Bool {
+                         undoable: Bool = false, allowDuringConflict: Bool = false,
+                         _ op: @escaping () async throws -> Void) async -> Bool {
         guard !isBusy else {
             if !quiet { Log.error("작업", "다른 작업 중이라 건너뜀: \(label)") }
+            return false
+        }
+        if conflicts != nil && !allowDuringConflict {
+            if !quiet { errorMessage = "먼저 원격과 충돌한 파일을 정리해 주세요." }
             return false
         }
         busyMessage = label
@@ -468,6 +513,9 @@ final class AppModel {
                 Log.info("작업", "완료: \(done)")
             }
             ok = true
+        } catch let conflict as MergeConflictError {
+            conflicts = conflict.files
+            statusMessage = "원격과 충돌한 파일이 있어요"
         } catch {
             if quiet {
                 Log.error("자동 동기화", error.localizedDescription)

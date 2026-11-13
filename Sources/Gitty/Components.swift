@@ -87,6 +87,17 @@ struct FileTable<MenuContent: View>: View {
             let ids = Set(items.map(\.id))
             selection = selection.filter { ids.contains($0) }
         }
+        // 스페이스바: 미리 보기 (Finder와 같음)
+        .onKeyPress(.space) {
+            QuickLook.shared.toggle(selectedURLs(in: rows))
+            return .handled
+        }
+        .onChange(of: selection) { QuickLook.shared.follow(selectedURLs(in: rows)) }
+    }
+
+    /// 화면 순서대로 선택한 항목
+    private func selectedURLs(in rows: [FileItem]) -> [URL] {
+        rows.filter { selection.contains($0.id) }.map(\.url)
     }
 }
 

@@ -123,6 +123,8 @@ struct RepoPaneView: View {
                 Button("새 폴더…", action: askNewFolder)
             } else {
                 Button("열기") { items.forEach(open) }
+                Button("미리 보기") { QuickLook.shared.toggle(items.map(\.url)) }
+                    .keyboardShortcut(.space, modifiers: [])
                 Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
                 if items.count == 1, !items[0].isDirectory {
                     Button("변경 기록…") { historyItem = items[0] }

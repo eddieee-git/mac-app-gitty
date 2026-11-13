@@ -23,7 +23,16 @@ AppModel (@MainActor, 화면 상태) ── GitRepo (actor, git 명령) ── S
 2. `GitRepo.commit(_:paths:)`: **그 작업에서 건드린 경로만** `git add -A -- <경로>`로 올리고 커밋한다. `--literal-pathspecs`라서 이름에 `*`, `[` 가 있어도 그대로 쓴다. 클론 폴더에 사용자가 넣은 다른 파일은 커밋되지 않는다.
 3. 커밋은 `takeLastCommit()`으로 `AppModel`이 가져가 **되돌리기 목록**(`undoStack`)에 넣는다. 되돌리기는 `git revert`라서 기록이 지워지지 않는다.
 4. push는 바로 하지 않고 **2초 뒤 한 번에** 한다 (`schedulePush` → `flushPush`). 그사이 다른 작업이 오면 다시 기다린다. 앱을 끝낼 때(`applicationShouldTerminate`)와 저장소 목록으로 돌아갈 때 남은 push를 마저 한다.
-5. push가 거절되면 `pull --rebase --autostash` 뒤 다시 시도한다. 충돌하면 rebase를 취소하고 알린다.
+5. push가 거절되면 `pull --rebase --autostash` 뒤 다시 시도한다.
+
+### 충돌
+
+rebase가 충돌하면 취소하고 `merge --no-ff`로 다시 합친다. 그래도 충돌하면 합치기를 열어 둔 채 `MergeConflictError`를 던지고, `AppModel.conflicts`에 담아 `ConflictPanel`을 띄운다(시트가 아니라 덮어 보여 준다. 시트는 앱 종료를 막는다). 충돌이 풀릴 때까지 다른 작업은 막는다.
+
+- 내 것 / 원격 것: `ls-files -u`의 2번(내 쪽)·3번(원격) blob을 `cat-file --filters`로 꺼내 쓴다. 한쪽에서 지웠으면 지운다.
+- 둘 다: 내 것은 그 자리에, 원격 것은 `이름 (원격).확장자`로 옆에 둔다.
+- 나중에: `merge --abort`로 내 쪽 그대로 돌아간다. 다음 동기화 때 다시 묻는다.
+- 앱을 껐다 켜도 `MERGE_HEAD`가 있으면 다시 묻는다.
 
 인증은 `-c credential.helper=!gh auth git-credential`로 GitHub CLI 로그인을 빌려 쓴다. 토큰을 따로 저장하지 않는다.
 
@@ -42,6 +51,8 @@ AppModel (@MainActor, 화면 상태) ── GitRepo (actor, git 명령) ── S
 | `Components.swift` | 파일 목록 표(정렬), 끌어다 놓기(`FileDropHost`), 이름 입력 창 등 공용 화면 |
 | `LocalPaneView.swift` / `RepoPaneView.swift` | 양쪽 패널 |
 | `HistoryView.swift` | 변경 기록 창, Git 메뉴(되돌리기) |
+| `ConflictView.swift` | 충돌 정리 판 |
+| `QuickLook.swift` | 스페이스바 미리 보기 |
 | `SetupCheck.swift` | 첫 실행 안내 (git, gh 로그인, git-lfs) |
 | `Updater.swift` / `UpdateView.swift` | 업데이트 확인·내려받기·서명 확인·설치, 알림 창 |
 | `Log.swift`, `LogPanel.swift`, `LogView.swift` | 작업 기록 파일(토큰 가림), 진행 로그 |

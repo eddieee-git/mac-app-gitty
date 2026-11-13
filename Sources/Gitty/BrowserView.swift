@@ -26,6 +26,11 @@ struct BrowserView: View {
             Divider()
             statusBar
         }
+        .overlay {
+            if let conflicts = model.conflicts, !model.isBusy {
+                ConflictPanel(files: conflicts)
+            }
+        }
         .navigationTitle(model.repoName)
         // 자동 동기화: 간격이 바뀌면 새로 시작
         .task(id: autoSyncMinutes) {

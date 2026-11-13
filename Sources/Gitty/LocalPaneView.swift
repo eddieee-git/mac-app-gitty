@@ -142,6 +142,8 @@ struct LocalPaneView: View {
                 Toggle("숨김 파일 보기", isOn: Binding(get: { local.showHidden }, set: { local.showHidden = $0 }))
             } else {
                 Button("열기") { items.forEach(open) }
+                Button("미리 보기") { QuickLook.shared.toggle(items.map(\.url)) }
+                    .keyboardShortcut(.space, modifiers: [])
                 Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
                 if items.count == 1, items[0].isDirectory {
                     if model.places.isFavorite(items[0].url) {
