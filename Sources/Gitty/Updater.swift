@@ -108,21 +108,87 @@ final class Updater {
         }
     }
 
+    /// 최신 릴리스 정보를 가져온다. GitHub API는 로그인 없이 한 시간에 60번(같은 네트워크 주소 기준)까지만 받아서,
+    /// 회사처럼 여러 사람이 한 주소를 쓰면 403이 난다. 그러면 gh 로그인으로, 그것도 안 되면 릴리스 페이지에서 직접 알아낸다.
+    /// 어느 길로 받든 dmg는 서명으로 확인하므로 안전하다.
     private static func fetchLatest() async throws -> Release {
-        // 시험용으로 다른 주소를 쓸 수 있다 (defaults의 updateFeedURL). 서명은 똑같이 확인하므로 안전하다.
-        let feed = UserDefaults.standard.string(forKey: "updateFeedURL").flatMap(URL.init(string:))
-            ?? URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
+        // 시험용으로 다른 주소를 쓸 수 있다 (defaults의 updateFeedURL)
+        if let feed = UserDefaults.standard.string(forKey: "updateFeedURL").flatMap(URL.init(string:)) {
+            return try await fetchViaAPI(feed)
+        }
+        var reasons: [String] = []
+        do {
+            return try await fetchViaAPI(URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
+        } catch {
+            reasons.append("API: \(error.localizedDescription)")
+        }
+        do {
+            let release = try await fetchViaGH()
+            Log.info("update", "GitHub API가 막혀 gh 로그인으로 확인함 (\(reasons.joined()))")
+            return release
+        } catch {
+            reasons.append("gh: \(error.localizedDescription)")
+        }
+        do {
+            let release = try await fetchViaReleasePage()
+            Log.info("update", "GitHub API가 막혀 릴리스 페이지로 확인함 (\(reasons.joined(separator: " · ")))")
+            return release
+        } catch {
+            reasons.append("page: \(error.localizedDescription)")
+        }
+        Log.error("update", "업데이트 확인 실패: " + reasons.joined(separator: " · "))
+        throw GittyError(message: tr("GitHub에서 업데이트 정보를 받지 못했어요. 잠시 뒤 다시 확인해 주세요."))
+    }
+
+    private struct Payload: Decodable {
+        struct Asset: Decodable { let name: String; let browser_download_url: URL }
+        let tag_name: String
+        let body: String?
+        let html_url: URL
+        let assets: [Asset]
+    }
+
+    /// GitHub API (로그인 없이)
+    static func fetchViaAPI(_ feed: URL) async throws -> Release {
         var request = URLRequest(url: feed)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Gitty/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 20
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw GittyError(message: tr("GitHub 응답 \(http.statusCode)"))
+            let limited = http.value(forHTTPHeaderField: "x-ratelimit-remaining") == "0"
+            throw GittyError(message: limited ? tr("GitHub 요청 한도에 걸렸어요 (응답 \(http.statusCode))") : tr("GitHub 응답 \(http.statusCode)"))
         }
-        struct Asset: Decodable { let name: String; let browser_download_url: URL }
-        struct Payload: Decodable { let tag_name: String; let body: String?; let html_url: URL; let assets: [Asset] }
-        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return try release(from: JSONDecoder().decode(Payload.self, from: data))
+    }
+
+    /// gh 로그인으로 (한 시간에 5000번까지)
+    static func fetchViaGH() async throws -> Release {
+        guard let gh = Shell.ghPath else { throw GittyError(message: "gh 없음") }
+        let r = await Shell.run(gh, ["api", "repos/\(repo)/releases/latest"])
+        guard r.status == 0, let data = r.stdout.data(using: .utf8) else { throw GittyError(message: r.errorText) }
+        return try release(from: JSONDecoder().decode(Payload.self, from: data))
+    }
+
+    /// API 없이: github.com/…/releases/latest 가 최신 태그 페이지로 넘겨 주는 것으로 버전을 알아내고,
+    /// 파일은 정해진 주소(releases/download/v버전/Gitty-버전.dmg)에서 받는다. 릴리스 노트는 없다.
+    static func fetchViaReleasePage() async throws -> Release {
+        var request = URLRequest(url: URL(string: "https://github.com/\(repo)/releases/latest")!)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 20
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let final = response.url, let http = response as? HTTPURLResponse, http.statusCode == 200,
+              final.path.contains("/releases/tag/") else {
+            throw GittyError(message: "릴리스 페이지 응답 \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        }
+        let tag = final.lastPathComponent
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        let base = "https://github.com/\(repo)/releases/download/\(tag)/Gitty-\(version).dmg"
+        return Release(version: version, notes: tr("릴리스 노트는 릴리스 페이지에서 볼 수 있어요."),
+                       dmgURL: URL(string: base)!, signatureURL: URL(string: base + ".sig")!, pageURL: final)
+    }
+
+    private static func release(from payload: Payload) throws -> Release {
         guard let dmg = payload.assets.first(where: { $0.name.hasSuffix(".dmg") }) else {
             throw GittyError(message: tr("릴리스 \(payload.tag_name)에 dmg가 없어요"))
         }
