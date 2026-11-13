@@ -84,6 +84,16 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     }
     let s2 = Places.googleMyDrives(home: mirror)
     check(s2.map(\.url.lastPathComponent) == ["My Drive"] && s2.first?.url.path.hasPrefix(mirror.path) == true, "미러링: 홈의 My Drive")
+    // 미러링인데 CloudStorage에도 빈 My Drive가 있는 경우 (실제 사용자 Mac에서 본 모양)
+    let both = work.appendingPathComponent("home-both")
+    for d in ["Library/CloudStorage/GoogleDrive-me@gmail.com/My Drive", "Library/CloudStorage/GoogleDrive-me@gmail.com/Shared drives/팀", "My Drive/10_Work"] {
+        try! fm.createDirectory(at: both.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    let s3 = Places.googleMyDrives(home: both)
+    check(s3.count == 1 && s3[0].url.path == both.appendingPathComponent("My Drive").path, "미러링: 비어 있는 CloudStorage 쪽 대신 실제 폴더")
+    check(s3.first?.title == "내 드라이브 (me@gmail.com)", "미러링 폴더에 계정 이름 (\(s3.first?.title ?? ""))")
+    try! fm.createDirectory(at: both.appendingPathComponent("Library/CloudStorage/GoogleDrive-me@gmail.com/My Drive/문서"), withIntermediateDirectories: true)
+    check(Places.googleMyDrives(home: both).count == 2, "CloudStorage 쪽에도 파일이 있으면 둘 다")
     let elsewhere = work.appendingPathComponent("elsewhere/내 드라이브")
     try! fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
     check(Places.googleMyDrives(extra: [elsewhere], home: mirror).count == 2, "Spotlight로 찾은 다른 곳의 내 드라이브")

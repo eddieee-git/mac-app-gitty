@@ -133,8 +133,14 @@ struct LocalPaneView: View {
         FileTable(pane: Self.paneName,
                   items: shownItems,
                   selection: $selection,
-                  emptyTitle: results == nil ? (local.loading ? "불러오는 중…" : "빈 폴더입니다") : (searching ? "찾는 중…" : "검색 결과가 없어요"),
-                  emptyHint: results == nil ? "오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다" : "하위 폴더까지 이름으로 찾아요",
+                  emptyTitle: results == nil
+                    ? (local.loading ? "불러오는 중…" : (local.loadError != nil ? "이 폴더를 읽을 수 없어요" : "빈 폴더입니다"))
+                    : (searching ? "찾는 중…" : "검색 결과가 없어요"),
+                  emptyHint: results == nil
+                    ? (local.loadError == "denied"
+                       ? "macOS가 Gitty의 접근을 막았어요.\n시스템 설정 → 개인정보 보호 및 보안 →\n파일 및 폴더(또는 전체 디스크 접근)에서 Gitty를 허용해 주세요."
+                       : (local.loadError ?? "오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다"))
+                    : "하위 폴더까지 이름으로 찾아요",
                   onOpen: open,
                   onDelete: trash) { items in
             if items.isEmpty {

@@ -16,6 +16,8 @@ final class LocalBrowser {
     private(set) var items: [FileItem] = []
     /// 폴더를 읽는 중 (Google Drive·네트워크 폴더는 몇 초 걸릴 수 있다)
     private(set) var loading = false
+    /// 폴더를 읽지 못한 이유 (권한 등). 읽었으면 nil.
+    private(set) var loadError: String?
     @ObservationIgnored private var loadToken = 0
     /// 다시 읽을 때마다 올라간다. 폴더 트리가 이 값을 보고 새로 그린다.
     private(set) var revision = 0
@@ -56,17 +58,30 @@ final class LocalBrowser {
         let changedDir = previous != nil && previous != dir.standardizedFileURL.path
         loading = true
         Task {
-            let (existing, list) = await Task.detached(priority: .userInitiated) {
+            let (existing, list, error) = await Task.detached(priority: .userInitiated) {
                 var target = dir
                 while !FileManager.default.fileExists(atPath: target.path) && target.path != "/" {
                     target = target.deletingLastPathComponent()
                 }
                 let list = target == dir ? FileItem.list(in: dir, includeHidden: showHidden, alwaysHidden: Self.alwaysHidden) : []
-                return (target, list)
+                // 비어 보이면 진짜 비었는지, 읽지 못한 건지 확인
+                var failure: String?
+                if list.isEmpty, target == dir {
+                    do { _ = try FileManager.default.contentsOfDirectory(atPath: dir.path) } catch {
+                        let ns = error as NSError
+                        let denied = ns.code == NSFileReadNoPermissionError
+                            || (ns.underlyingErrors.first as NSError?)?.code == Int(EPERM)
+                            || (ns.underlyingErrors.first as NSError?)?.code == Int(EACCES)
+                        failure = denied ? "denied" : error.localizedDescription
+                        Log.error("local", "폴더를 읽지 못함: \(dir.path)\n\(error.localizedDescription)")
+                    }
+                }
+                return (target, list, failure)
             }.value
             guard token == loadToken else { return }   // 그사이 다른 폴더로 갔음
             if existing != dir { self.dir = existing; return }   // 폴더가 사라짐: didSet이 상위 폴더를 다시 읽는다
             items = list
+            loadError = error
             loading = false
             revision += 1
         }
