@@ -3,77 +3,69 @@ import AppKit
 
 /// 오른쪽: Git 저장소
 struct RepoPaneView: View {
+    static let paneName = "Git 저장소"
+
     @Environment(AppModel.self) private var model
     @State private var selection = Set<URL>()
     @State private var nameRequest: NameRequest?
     @State private var deleting: [FileItem] = []
-    @State private var pendingUpload: PendingTransfer?
-    @State private var pendingDownload: PendingTransfer?
-    @State private var dropTargeted = false
+    @State private var pending: PendingTransfer?
+    @State private var dropTarget: DropTarget = .none
+    @State private var treeDropTarget: DropTarget = .none
+    @State private var query = ""
+    @State private var results: [FileItem]?
+    @State private var searching = false
+    @AppStorage("showRepoTree") private var showTree = true
+
+    private var shownItems: [FileItem] { results ?? model.items }
 
     private var selectedItems: [FileItem] {
-        model.items.filter { selection.contains($0.id) }
+        shownItems.filter { selection.contains($0.id) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Git · \(model.repoName)", icon: "lock.fill", tint: .orange) {
-                Button { sendToLocal(selectedItems, move: false) } label: {
-                    Label("내 폴더로 복사", systemImage: "arrow.left.circle.fill")
+            header
+
+            HStack(spacing: 6) {
+                Breadcrumb(rootLabel: model.repoName, rootIcon: "shippingbox.fill", components: model.path) { keep in
+                    model.path = Array(model.path.prefix(keep))
                 }
-                .labelStyle(.titleAndIcon)
-                .disabled(selection.isEmpty || model.isBusy)
-                .help("선택한 항목을 왼쪽 내 폴더로 복사 (다운로드)")
-
-                Divider().frame(height: 16)
-
-                Button { model.path.removeLast() } label: { Label("상위 폴더", systemImage: "chevron.up") }
-                    .disabled(model.path.isEmpty)
-                    .help("상위 폴더")
-                Button { askNewFolder() } label: { Label("새 폴더", systemImage: "folder.badge.plus") }
-                    .help("새 폴더")
-                Button(action: chooseUpload) { Label("업로드", systemImage: "square.and.arrow.up") }
-                    .keyboardShortcut("o", modifiers: .command)
-                    .help("파일 선택해서 업로드 (⌘O)")
-            }
-            .disabled(model.isBusy)
-
-            Breadcrumb(rootLabel: model.repoName, rootIcon: "shippingbox.fill", components: model.path) { keep in
-                model.path = Array(model.path.prefix(keep))
+                SearchBox(text: $query, prompt: "저장소에서 검색")
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 6)
             }
             Divider()
 
-            FileTable(items: model.items,
-                      selection: $selection,
-                      emptyTitle: "빈 폴더입니다",
-                      emptyHint: "왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드됩니다",
-                      onOpen: open,
-                      onDelete: { deleting = $0 }) { items in
-                if items.isEmpty {
-                    Button("업로드…", action: chooseUpload)
-                    Button("새 폴더…", action: askNewFolder)
-                } else {
-                    Button("열기") { items.forEach(open) }
-                    Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
-                    Divider()
-                    Button("← 내 폴더로 복사") { sendToLocal(items, move: false) }
-                    Button("← 내 폴더로 이동") { sendToLocal(items, move: true) }
-                    Divider()
-                    Button("이름 변경…") { askRename(items[0]) }
-                        .disabled(items.count != 1)
-                    Button("삭제…", role: .destructive) { deleting = items }
+            HSplitView {
+                if showTree, let root = model.root {
+                    FileDropHost(name: "\(Self.paneName) 트리", target: $treeDropTarget,
+                                 accepts: { urls, folder in folder != nil && accepts(urls, folder) },
+                                 onDrop: receive) {
+                        FolderTree(favorites: model.repoFavorites.roots,
+                                   roots: [TreeRoot(url: root, title: model.repoName, icon: "shippingbox")],
+                                   current: model.currentDir ?? root,
+                                   revision: model.revision,
+                                   includeHidden: true,
+                                   alwaysHidden: AppModel.repoHidden,
+                                   onSelect: go(to:),
+                                   favoriteActions: model.repoFavorites.actions,
+                                   rootsTitle: "저장소")
+                    }
+                    .frame(minWidth: 140, idealWidth: 190, maxWidth: 360, maxHeight: .infinity)
                 }
+
+                FileDropHost(name: Self.paneName, target: $dropTarget, accepts: accepts, onDrop: receive) {
+                    fileTable
+                }
+                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
             }
-            .disabled(model.isBusy)
         }
-        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-            loadFileURLs(providers, completion: receive)
-            return true
+        .onChange(of: model.path) {
+            selection.removeAll()
+            query = ""
         }
-        .overlay {
-            if dropTargeted { DropHighlight(text: "놓으면 /\(model.relativeDir) 에 업로드") }
-        }
-        .onChange(of: model.path) { selection.removeAll() }
+        .task(id: SearchKey(query: query, dir: model.relativeDir, revision: model.revision)) { await search() }
         .sheet(item: $nameRequest) { NameSheet(request: $0) }
         .confirmationDialog(deleteTitle,
                             isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } })) {
@@ -85,23 +77,87 @@ struct RepoPaneView: View {
             Text(deleting.map(\.name).prefix(10).joined(separator: "\n")
                  + "\n\n삭제 후 바로 커밋·push 됩니다. (git 히스토리에는 남아 있어요)")
         }
-        .confirmationDialog("Git 저장소의 같은 이름 항목을 덮어쓸까요?",
-                            isPresented: Binding(get: { pendingUpload != nil }, set: { if !$0 { pendingUpload = nil } }),
-                            presenting: pendingUpload) { p in
-            Button("덮어쓰기", role: .destructive) {
-                Task { await model.upload(p.urls, removeLocalAfter: p.move) }
+        .overwriteConfirmation($pending)
+    }
+
+    // MARK: - 화면 조각
+
+    private var header: some View {
+        PaneHeader(title: "Git · \(model.repoName)", icon: "lock.fill", tint: .orange) {
+            Button { sendToLocal(selectedItems, move: false) } label: {
+                Label("내 폴더로 복사", systemImage: "arrow.left.circle.fill")
             }
-        } message: { p in
-            Text(p.conflicts.prefix(10).joined(separator: "\n"))
+            .labelStyle(.titleAndIcon)
+            .disabled(selection.isEmpty || model.isBusy)
+            .help("선택한 항목을 왼쪽 내 폴더로 복사 (다운로드)")
+
+            Divider().frame(height: 16)
+
+            Button { showTree.toggle() } label: { Label("폴더 트리", systemImage: "sidebar.left") }
+                .help(showTree ? "폴더 트리 숨기기" : "폴더 트리 보기")
+            Button { model.path.removeLast() } label: { Label("상위 폴더", systemImage: "chevron.up") }
+                .disabled(model.path.isEmpty)
+                .help("상위 폴더")
+            Button { askNewFolder() } label: { Label("새 폴더", systemImage: "folder.badge.plus") }
+                .help("새 폴더")
+            Button(action: chooseUpload) { Label("업로드", systemImage: "square.and.arrow.up") }
+                .keyboardShortcut("o", modifiers: .command)
+                .help("파일 선택해서 업로드 (⌘O)")
         }
-        .confirmationDialog("내 폴더의 같은 이름 항목을 덮어쓸까요?",
-                            isPresented: Binding(get: { pendingDownload != nil }, set: { if !$0 { pendingDownload = nil } }),
-                            presenting: pendingDownload) { p in
-            Button("덮어쓰기", role: .destructive) {
-                Task { await model.copyToLocal(p.urls, removeFromRepo: p.move) }
+        .disabled(model.isBusy)
+    }
+
+    private var fileTable: some View {
+        FileTable(pane: Self.paneName,
+                  items: shownItems,
+                  selection: $selection,
+                  emptyTitle: results == nil ? "빈 폴더입니다" : (searching ? "찾는 중…" : "검색 결과가 없어요"),
+                  emptyHint: results == nil ? "왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드됩니다" : "하위 폴더까지 이름으로 찾아요",
+                  onOpen: open,
+                  onDelete: { deleting = $0 }) { items in
+            if items.isEmpty {
+                Button("업로드…", action: chooseUpload)
+                Button("새 폴더…", action: askNewFolder)
+            } else {
+                Button("열기") { items.forEach(open) }
+                Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting(items.map(\.url)) }
+                if items.count == 1, items[0].isDirectory {
+                    if model.repoFavorites.isFavorite(items[0].url) {
+                        Button("즐겨찾기에서 제거") { model.repoFavorites.remove(items[0].url) }
+                    } else {
+                        Button("즐겨찾기에 추가") { model.repoFavorites.add(items[0].url) }
+                    }
+                }
+                Divider()
+                Button("← 내 폴더로 복사") { sendToLocal(items, move: false) }
+                Button("← 내 폴더로 이동") { sendToLocal(items, move: true) }
+                Divider()
+                Button("이름 변경…") { askRename(items[0]) }
+                    .disabled(items.count != 1)
+                Button("삭제…", role: .destructive) { deleting = items }
             }
-        } message: { p in
-            Text(p.conflicts.prefix(10).joined(separator: "\n") + "\n\n기존 항목은 휴지통으로 이동합니다.")
+        }
+        .disabled(model.isBusy)
+        .overlay(alignment: .top) {
+            if let results, !query.isEmpty {
+                HStack(spacing: 6) {
+                    if searching { ProgressView().controlSize(.mini) }
+                    Text(searching ? "찾는 중…" : "‘\(query)’ \(results.count >= 1000 ? "1000개 이상" : "\(results.count)개") · 하위 폴더 포함")
+                }
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.top, 30)
+                .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            switch dropTarget {
+            case .none: EmptyView()
+            case .here: DropHighlight(text: "놓으면 /\(model.relativeDir) 에 업로드")
+            case .folder(let url): DropHighlight(text: "‘\(url.lastPathComponent)’ 폴더에 놓기", full: false)
+            }
         }
     }
 
@@ -111,12 +167,40 @@ struct RepoPaneView: View {
         deleting.count == 1 ? "‘\(deleting[0].name)’을(를) 삭제할까요?" : "\(deleting.count)개 항목을 삭제할까요?"
     }
 
+    /// 저장소 안의 폴더로 이동
+    private func go(to url: URL) {
+        if let rel = model.repoRelativePath(url) {
+            model.path = rel.split(separator: "/").map(String.init)
+        } else {
+            model.path = []
+        }
+    }
+
     private func open(_ item: FileItem) {
         if item.isDirectory {
-            model.path.append(item.name)
+            go(to: item.url)
         } else {
             NSWorkspace.shared.open(item.url)
         }
+    }
+
+    private func search() async {
+        let text = query.trimmed
+        guard !text.isEmpty, let dir = model.currentDir else {
+            results = nil
+            searching = false
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(250))
+        guard !Task.isCancelled else { return }
+        searching = true
+        if results == nil { results = [] }
+        let found = await Task.detached(priority: .userInitiated) {
+            FileItem.search(text, in: dir, includeHidden: true, alwaysHidden: AppModel.repoHidden)
+        }.value
+        guard !Task.isCancelled else { return }
+        results = found
+        searching = false
     }
 
     private func askNewFolder() {
@@ -139,35 +223,66 @@ struct RepoPaneView: View {
         panel.prompt = "업로드"
         panel.directoryURL = model.local.dir
         panel.message = "/\(model.relativeDir) 에 업로드할 파일이나 폴더를 선택하세요"
-        if panel.runModal() == .OK { receive(panel.urls) }
+        if panel.runModal() == .OK { receive(panel.urls, folder: nil) }
     }
 
     /// 오른쪽 → 왼쪽 (내 폴더로)
     private func sendToLocal(_ items: [FileItem], move: Bool) {
         guard !items.isEmpty, !model.isBusy else { return }
-        let existing = Set(model.local.items.map(\.name))
-        let conflicts = items.map(\.name).filter(existing.contains)
         let urls = items.map(\.url)
+        let conflicts = items.map(\.name).filter(existingNames(in: model.local.dir).contains)
+        let run = { _ = Task { await model.copyToLocal(urls, removeFromRepo: move) } }
         if conflicts.isEmpty {
-            Task { await model.copyToLocal(urls, removeFromRepo: move) }
+            run()
         } else {
-            pendingDownload = PendingTransfer(urls: urls, move: move, conflicts: conflicts)
+            Log.info("download", "같은 이름이 있어 덮어쓸지 묻는 중: \(conflicts.joined(separator: ", "))")
+            pending = PendingTransfer(title: "내 폴더의 같은 이름 항목을 덮어쓸까요?", conflicts: conflicts,
+                                      note: "기존 항목은 휴지통으로 이동합니다.", perform: run)
         }
         selection.removeAll()
     }
 
-    /// 왼쪽 패널·Finder에서 떨어뜨린 경우: 업로드 (복사)
-    private func receive(_ urls: [URL]) {
-        guard !model.isBusy else { return }
-        // 저장소 안의 항목을 다시 저장소에 떨어뜨린 경우는 무시
+    // MARK: - 놓기
+
+    private func isInRepo(_ urls: [URL]) -> Bool {
+        urls.allSatisfy { model.repoRelativePath($0) != nil }
+    }
+
+    private func accepts(_ urls: [URL], _ folder: URL?) -> Bool {
+        if model.isBusy { return false }
+        // 저장소 안의 항목은 폴더 위에 놓을 때만 (git mv로 이동)
+        if isInRepo(urls) { return folder != nil }
+        return true
+    }
+
+    /// folder: 놓은 폴더 (nil이면 지금 보고 있는 폴더)
+    private func receive(_ urls: [URL], folder: URL?) {
+        guard !model.isBusy else {
+            Log.error("upload", "다른 작업 중이라 받지 않음")
+            model.errorMessage = "다른 작업이 끝난 뒤 다시 시도하세요."
+            return
+        }
+        guard let root = model.root else { return }
+        let destURL = folder ?? model.currentDir ?? root
+        let destDir = destURL.standardizedFileURL.path == root.standardizedFileURL.path
+            ? "" : (model.repoRelativePath(destURL) ?? model.relativeDir)
+
+        if isInRepo(urls) {
+            // 저장소 안에서 옮기기
+            guard folder != nil else { return }
+            Task { await model.moveInRepo(urls, to: destURL) }
+            return
+        }
+
         let external = urls.filter { model.repoRelativePath($0) == nil }
-        guard !external.isEmpty else { return }
-        let existing = Set(model.items.map(\.name))
-        let conflicts = external.map(\.lastPathComponent).filter(existing.contains)
+        let conflicts = external.map(\.lastPathComponent).filter(existingNames(in: destURL).contains)
+        let run = { _ = Task { await model.upload(external, to: destDir) } }
         if conflicts.isEmpty {
-            Task { await model.upload(external) }
+            run()
         } else {
-            pendingUpload = PendingTransfer(urls: external, move: false, conflicts: conflicts)
+            Log.info("upload", "같은 이름이 있어 덮어쓸지 묻는 중: \(conflicts.joined(separator: ", "))")
+            pending = PendingTransfer(title: "/\(destDir)에 같은 이름이 있어요. 덮어쓸까요?",
+                                      conflicts: conflicts, note: "", perform: run)
         }
     }
 }

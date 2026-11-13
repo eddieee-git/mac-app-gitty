@@ -4,6 +4,8 @@ import AppKit
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
     @State private var showClone = false
+    @State private var selectedRecent: URL?
+    @State private var opening: URL?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -38,7 +40,7 @@ struct WelcomeView: View {
             if !model.recents.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("최근 저장소").font(.headline)
-                    List(model.recents, id: \.self) { url in
+                    List(model.recents, id: \.self, selection: $selectedRecent) { url in
                         HStack {
                             Image(systemName: "folder.fill").foregroundStyle(.tint)
                             VStack(alignment: .leading) {
@@ -46,17 +48,29 @@ struct WelcomeView: View {
                                 Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
+                            if opening == url {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Button("열기") { openRecent(url) }
+                                    .controlSize(.small)
+                            }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { Task { await model.open(url) } }
-                        .contextMenu {
-                            Button("열기") { Task { await model.open(url) } }
+                        .padding(.vertical, 2)
+                    }
+                    // 더블클릭·Return은 macOS 목록의 기본 동작(primaryAction)으로 받는다. 줄 어디를 눌러도 된다.
+                    .contextMenu(forSelectionType: URL.self) { urls in
+                        if let url = urls.first {
+                            Button("열기") { openRecent(url) }
+                            Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            Divider()
                             Button("목록에서 제거") { model.removeRecent(url) }
                         }
+                    } primaryAction: { urls in
+                        if let url = urls.first { openRecent(url) }
                     }
                     .listStyle(.bordered(alternatesRowBackgrounds: true))
                     .frame(maxWidth: 520, maxHeight: 220)
-                    Text("더블클릭해서 열기").font(.caption).foregroundStyle(.secondary)
+                    Text("더블클릭, Return 키, 또는 열기 버튼으로 열어요").font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -72,6 +86,17 @@ struct WelcomeView: View {
         .disabled(model.isBusy)
         .sheet(isPresented: $showClone) {
             CloneSheet()
+        }
+    }
+
+    private func openRecent(_ url: URL) {
+        guard opening == nil, !model.isBusy else { return }
+        selectedRecent = url
+        opening = url
+        Log.info("repo", "최근 저장소 열기: \(url.path)")
+        Task {
+            await model.open(url)
+            opening = nil
         }
     }
 

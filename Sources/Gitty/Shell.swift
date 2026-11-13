@@ -27,7 +27,9 @@ enum Shell {
     static let ghPath: String? = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
         .first { FileManager.default.isExecutableFile(atPath: $0) }
 
-    static func run(_ executable: String, _ args: [String], cwd: URL? = nil) async -> CommandResult {
+    /// onStderrLine: stderr를 줄 단위(\r, \n 기준)로 바로바로 넘겨 받는다. git 진행률 표시용.
+    static func run(_ executable: String, _ args: [String], cwd: URL? = nil,
+                    onStderrLine: (@Sendable (String) -> Void)? = nil) async -> CommandResult {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -39,6 +41,7 @@ enum Shell {
                 // Finder에서 실행하면 PATH가 최소한이라 Homebrew 경로를 보강
                 env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
                 env["GIT_TERMINAL_PROMPT"] = "0"   // 인증 프롬프트로 멈추지 않도록
+                env["GIT_LFS_FORCE_PROGRESS"] = "1" // 파이프로 받아도 LFS 진행률을 출력하게
                 process.environment = env
 
                 let outPipe = Pipe(), errPipe = Pipe()
@@ -58,7 +61,23 @@ enum Shell {
                 let group = DispatchGroup()
                 group.enter()
                 DispatchQueue.global().async {
-                    errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    let handle = errPipe.fileHandleForReading
+                    if let onStderrLine {
+                        var pending = Data()
+                        while true {
+                            let chunk = handle.availableData
+                            if chunk.isEmpty { break }
+                            errData.append(chunk)
+                            pending.append(chunk)
+                            while let i = pending.firstIndex(where: { $0 == 10 || $0 == 13 }) {
+                                let line = String(decoding: pending[pending.startIndex..<i], as: UTF8.self)
+                                pending = Data(pending[(i + 1)...])
+                                if !line.isEmpty { onStderrLine(line) }
+                            }
+                        }
+                    } else {
+                        errData = handle.readDataToEndOfFile()
+                    }
                     group.leave()
                 }
                 let outData = outPipe.fileHandleForReading.readDataToEndOfFile()

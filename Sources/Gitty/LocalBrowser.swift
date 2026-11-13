@@ -14,6 +14,9 @@ final class LocalBrowser {
         }
     }
     private(set) var items: [FileItem] = []
+    /// 다시 읽을 때마다 올라간다. 폴더 트리가 이 값을 보고 새로 그린다.
+    private(set) var revision = 0
+    nonisolated static let alwaysHidden: Set<String> = [".DS_Store"]
     var showHidden = false { didSet { reload() } }
 
     static let home = FileManager.default.homeDirectoryForCurrentUser
@@ -46,10 +49,8 @@ final class LocalBrowser {
             target = target.deletingLastPathComponent()
         }
         if target != dir { dir = target; return }   // didSet이 다시 reload
-        let showHidden = showHidden
-        items = FileItem.list(in: dir) { name in
-            name == ".DS_Store" || (!showHidden && name.hasPrefix("."))
-        }
+        items = FileItem.list(in: dir, includeHidden: showHidden, alwaysHidden: Self.alwaysHidden)
+        revision += 1
     }
 
     func goUp() {
