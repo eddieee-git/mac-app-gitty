@@ -2,6 +2,14 @@
 
 Details for each version are in [docs/releases](docs/releases) and [GitHub Releases](https://github.com/eddieee-git/mac-app-gitty/releases). 한국어: [CHANGELOG.md](CHANGELOG.md)
 
+## 0.2.2 (2026-11-15)
+
+- Updates use the updater shared by all five apps: separate switches for automatic checks (on by default) and automatic installs (off by default), plus **Check Now** in Settings
+- Stronger update checks: installs only after the signature, SHA-256, bundle ID, version, and code signature are verified
+- Finds the latest version from the releases page even when GitHub's rate limit (403/429) is hit
+- About section in Settings: version, GitHub, changelog, problem reports, and other apps
+- Friendlier tone in Korean messages
+
 ## 0.2.1 (2026-11-14)
 
 - Fixed update checks failing with GitHub's rate limit (403): falls back to another way of finding the latest version
