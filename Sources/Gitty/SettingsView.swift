@@ -59,7 +59,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            UpdateSettingsSection()
+            AppUpdaterSection(updater: .shared)
 
             Section(tr("기록")) {
                 Toggle(tr("작업 기록을 파일로 남기기"), isOn: $fileLogging)

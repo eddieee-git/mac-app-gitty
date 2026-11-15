@@ -19,12 +19,6 @@ struct GittyApp: App {
             LogCommands()
         }
 
-        // 업데이트 알림은 시트가 아니라 따로 띄운다: 시트가 떠 있으면 macOS가 앱 종료(로그아웃·재시동 포함)를 막는다
-        Window(tr("Gitty 업데이트"), id: "update") {
-            UpdateWindow()
-        }
-        .windowResizability(.contentSize)
-
         Window(tr("Gitty 작업 기록"), id: "log") {
             LogView()
         }
@@ -60,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `swift run`으로 실행해도 일반 앱처럼 Dock/메뉴바에 나타나도록
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        Updater.shared.startAutomaticChecks()
+        AppUpdater.shared.start()
     }
 
     /// 커밋해 두고 아직 올리지 않은 게 있으면 마저 올린 뒤 끝낸다
@@ -76,8 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // 자동 설치로 받아 둔 새 버전이 있으면 종료 뒤에 바꿔 끼운다
-        MainActor.assumeIsolated { Updater.shared.installStagedOnQuit(relaunch: false) }
         Log.flush()
     }
 
@@ -147,9 +139,6 @@ struct TabCommands: Commands {
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @State private var updater = Updater.shared
-    @Environment(\.openWindow) private var openWindow
-
     var body: some View {
         VStack(spacing: 0) {
             UpdateBanner()
@@ -160,17 +149,6 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 520)
-        .onChange(of: updater.offer) {
-            if updater.offer != nil { openWindow(id: "update") }
-        }
-        .alert(tr("업데이트"), isPresented: Binding(
-            get: { updater.notice != nil },
-            set: { if !$0 { updater.notice = nil } })
-        ) {
-            Button(tr("확인")) {}
-        } message: {
-            Text(updater.notice ?? "")
-        }
         .alert(tr("오류"), isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } })

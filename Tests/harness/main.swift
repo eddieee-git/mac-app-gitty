@@ -28,36 +28,10 @@ func sh(_ cmd: String, in dir: URL) -> String {
 let work = URL(fileURLWithPath: CommandLine.arguments[1])
 
 @MainActor func run() async {
-    section("버전 비교")
-    check(Updater.isNewer("0.1.10", than: "0.1.9"), "0.1.10 > 0.1.9")
-    check(Updater.isNewer("1.0", than: "0.9.9"), "1.0 > 0.9.9")
-    check(!Updater.isNewer("0.1.1", than: "0.1.1"), "같은 버전은 새 버전 아님")
-    check(!Updater.isNewer("0.1.0", than: "0.1.1"), "낮은 버전은 새 버전 아님")
-
-    section("업데이트 서명")
-    let key = Curve25519.Signing.PrivateKey()
-    let dmg = work.appendingPathComponent("Gitty-9.9.9.dmg")
-    try! Data((0..<200_000).map { UInt8($0 % 251) }).write(to: dmg)
-    let sig = work.appendingPathComponent("Gitty-9.9.9.dmg.sig")
-    try! key.signature(for: Data(contentsOf: dmg)).base64EncodedString().write(to: sig, atomically: true, encoding: .utf8)
-    let release = Updater.Release(version: "9.9.9", notes: "", dmgURL: dmg, signatureURL: sig, pageURL: dmg)
-    do {
-        try await Updater.verifySignature(of: dmg, release: release, publicKey: key.publicKey)
-        check(true, "올바른 서명 통과")
-    } catch { check(false, "올바른 서명 통과: \(error)") }
-    var bytes = try! Data(contentsOf: dmg)
-    bytes[bytes.count / 2] ^= 0xFF
-    let tampered = work.appendingPathComponent("tampered.dmg")
-    try! bytes.write(to: tampered)
-    do {
-        try await Updater.verifySignature(of: tampered, release: release, publicKey: key.publicKey)
-        check(false, "변조된 파일 거부")
-    } catch { check(true, "변조된 파일 거부") }
-    do {
-        try await Updater.verifySignature(of: dmg, release: release, publicKey: Curve25519.Signing.PrivateKey().publicKey)
-        check(false, "다른 키로 만든 서명 거부")
-    } catch { check(true, "다른 키로 만든 서명 거부") }
-    check(Updater.bundledPublicKey != nil, "앱에 공개 키가 들어 있음")
+    section("업데이트 (공통)")
+    let updateFailures = AppUpdater.selfTest(appName: "Gitty", publicKey: AppUpdater.appPublicKey, format: AppUpdater.appSignatureFormat)
+    updateFailures.forEach { check(false, $0) }
+    check(updateFailures.isEmpty, "공통 업데이트 점검")
 
     section("로그 가리기")
     check(Log.redact("https://user:ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/a/b.git") == "https://***@github.com/a/b.git",
