@@ -122,7 +122,7 @@ final class LocalBrowser {
         guard let name = FileOps.validateName(name) else { return }
         let url = dir.appendingPathComponent(name)
         guard !FileManager.default.fileExists(atPath: url.path) else {
-            throw GittyError(message: tr("같은 이름의 항목이 이미 있습니다: \(name)"))
+            throw GittyError(message: tr("같은 이름의 항목이 이미 있어요: \(name)"))
         }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
         reload()

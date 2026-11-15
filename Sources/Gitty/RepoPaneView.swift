@@ -83,7 +83,7 @@ struct RepoPaneView: View {
             }
         } message: {
             Text(deleting.map(\.name).prefix(10).joined(separator: "\n")
-                 + tr("\n\n삭제 후 바로 커밋·push 됩니다. (git 히스토리에는 남아 있어요)"))
+                 + tr("\n\n삭제 후 바로 커밋·push 돼요. (git 히스토리에는 남아 있어요)"))
         }
         .overwriteConfirmation($pending)
     }
@@ -113,8 +113,8 @@ struct RepoPaneView: View {
         FileTable(pane: Self.paneName,
                   items: shownItems,
                   selection: Bindable(model).repoSelection,
-                  emptyTitle: results == nil ? (model.loading ? tr("불러오는 중…") : tr("빈 폴더입니다")) : (searching ? tr("찾는 중…") : tr("검색 결과가 없어요")),
-                  emptyHint: results == nil ? tr("왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드됩니다") : tr("하위 폴더까지 이름으로 찾아요"),
+                  emptyTitle: results == nil ? (model.loading ? tr("불러오는 중…") : tr("빈 폴더예요")) : (searching ? tr("찾는 중…") : tr("검색 결과가 없어요")),
+                  emptyHint: results == nil ? tr("왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드돼요") : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
                   onDelete: { deleting = $0 },
                   focus: focus, paneID: .repo, onParent: { if !model.path.isEmpty { model.path.removeLast() } },

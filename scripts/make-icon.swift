@@ -1,4 +1,4 @@
-// 앱 아이콘을 그린다: Resources/AppIcon.icns, docs/icon.png
+// 앱 아이콘을 그린다: Resources/AppIcon.icns, docs/images/icon.png
 // 사용: swift scripts/make-icon.swift  (scripts/make-icon.sh가 iconset·icns까지 만든다)
 import AppKit
 

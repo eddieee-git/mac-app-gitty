@@ -246,7 +246,7 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     section("번역")
     check(Loc.fill("Moved {} items to /{}", ["3", "docs"]) == "Moved 3 items to /docs", "{} 순서대로")
     check(Loc.fill("{2} ← {1}", ["a", "b"]) == "b ← a", "{1} {2} 자리 지정")
-    check(tr("‘\("x")’ 폴더를 만들었습니다").contains("x"), "번역 없으면 원문에 값 채우기")
+    check(tr("‘\("x")’ 폴더를 만들었어요").contains("x"), "번역 없으면 원문에 값 채우기")
 
     section("폴더 맞추기 비교")
     let syncA = work.appendingPathComponent("sync-a"), syncB = work.appendingPathComponent("sync-b")

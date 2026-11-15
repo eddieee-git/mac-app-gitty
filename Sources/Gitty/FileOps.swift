@@ -114,7 +114,7 @@ enum FileOps {
             let srcPath = src.standardizedFileURL.path
             if (srcPath as NSString).deletingLastPathComponent == dirPath { continue }   // 이미 같은 폴더
             if (dirPath + "/").hasPrefix(srcPath + "/") {
-                throw GittyError(message: tr("폴더를 자기 자신 안으로 복사할 수 없습니다: \(src.lastPathComponent)"))
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 복사할 수 없어요: \(src.lastPathComponent)"))
             }
             let dst = dir.appendingPathComponent(src.lastPathComponent)
             try Cancellation.check()
@@ -138,7 +138,7 @@ enum FileOps {
             let srcPath = src.standardizedFileURL.path
             if (srcPath as NSString).deletingLastPathComponent == dirPath { continue }
             if (dirPath + "/").hasPrefix(srcPath + "/") {
-                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없습니다: \(src.lastPathComponent)"))
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없어요: \(src.lastPathComponent)"))
             }
             let dst = dir.appendingPathComponent(src.lastPathComponent)
             if fm.fileExists(atPath: dst.path) {
@@ -180,7 +180,7 @@ enum FileOps {
         let input = try FileHandle(forReadingFrom: src)
         defer { try? input.close() }
         guard fm.createFile(atPath: dst.path, contents: nil) else {
-            throw GittyError(message: tr("파일을 만들 수 없습니다: \(dst.path)"))
+            throw GittyError(message: tr("파일을 만들 수 없어요: \(dst.path)"))
         }
         let output = try FileHandle(forWritingTo: dst)
         do {
@@ -234,7 +234,7 @@ enum FileOps {
             try fm.moveItem(at: tmp, to: dst)
         } else {
             guard !fm.fileExists(atPath: dst.path) else {
-                throw GittyError(message: tr("같은 이름의 항목이 이미 있습니다: \(newName)"))
+                throw GittyError(message: tr("같은 이름의 항목이 이미 있어요: \(newName)"))
             }
             try fm.moveItem(at: url, to: dst)
         }

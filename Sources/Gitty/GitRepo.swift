@@ -144,7 +144,7 @@ actor GitRepo {
         if cleaned.hasSuffix(".git") { cleaned.removeLast(4) }
         let parts = Array(cleaned.replacingOccurrences(of: ":", with: "/")
             .split(separator: "/").map(String.init).suffix(2))
-        guard parts.count == 2 else { throw GittyError(message: tr("저장소 형식이 올바르지 않습니다: \(spec)")) }
+        guard parts.count == 2 else { throw GittyError(message: tr("저장소 형식이 올바르지 않아요: \(spec)")) }
         let dest = parent.appendingPathComponent(parts[0]).appendingPathComponent(parts[1])
 
         if FileManager.default.fileExists(atPath: dest.appendingPathComponent(".git").path) {
@@ -651,10 +651,10 @@ actor GitRepo {
             let newPath = dir.isEmpty ? name : "\(dir)/\(name)"
             if newPath == path { continue }
             if dir == path || dir.hasPrefix(path + "/") {
-                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없습니다: \(name)"))
+                throw GittyError(message: tr("폴더를 자기 자신 안으로 옮길 수 없어요: \(name)"))
             }
             if fm.fileExists(atPath: url(for: newPath).path) {
-                throw GittyError(message: tr("옮길 폴더에 같은 이름이 이미 있습니다: \(newPath)"))
+                throw GittyError(message: tr("옮길 폴더에 같은 이름이 이미 있어요: \(newPath)"))
             }
             try fm.createDirectory(at: url(for: dir), withIntermediateDirectories: true)
             let tracked = await result(["ls-files", "--error-unmatch", "--", path], probe: true).status == 0

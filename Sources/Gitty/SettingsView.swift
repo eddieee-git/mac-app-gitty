@@ -77,6 +77,8 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            AppAboutSections(appName: "Gitty", english: Loc.isEnglish)
         }
         .formStyle(.grouped)
         .frame(width: 460)

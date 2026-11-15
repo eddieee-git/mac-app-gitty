@@ -131,12 +131,12 @@ struct LocalPaneView: View {
                   items: shownItems,
                   selection: Bindable(model).localSelection,
                   emptyTitle: results == nil
-                    ? (local.loading ? tr("불러오는 중…") : (local.loadError != nil ? tr("이 폴더를 읽을 수 없어요") : tr("빈 폴더입니다")))
+                    ? (local.loading ? tr("불러오는 중…") : (local.loadError != nil ? tr("이 폴더를 읽을 수 없어요") : tr("빈 폴더예요")))
                     : (searching ? tr("찾는 중…") : tr("검색 결과가 없어요")),
                   emptyHint: results == nil
                     ? (local.loadError == "denied"
                        ? tr("macOS가 Gitty의 접근을 막았어요.\n시스템 설정 → 개인정보 보호 및 보안 →\n파일 및 폴더(또는 전체 디스크 접근)에서 Gitty를 허용해 주세요.")
-                       : (local.loadError ?? tr("오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받습니다")))
+                       : (local.loadError ?? tr("오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받아요")))
                     : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
                   onDelete: trash,
@@ -301,7 +301,7 @@ struct LocalPaneView: View {
         } else {
             Log.info("download", "같은 이름이 있어 덮어쓸지 묻는 중: \(conflicts.joined(separator: ", "))")
             pending = PendingTransfer(title: tr("‘\(dest.lastPathComponent)’에 같은 이름이 있어요. 덮어쓸까요?"),
-                                      conflicts: conflicts, note: tr("기존 항목은 휴지통으로 이동합니다."), perform: run)
+                                      conflicts: conflicts, note: tr("기존 항목은 휴지통으로 이동해요."), perform: run)
         }
     }
 }

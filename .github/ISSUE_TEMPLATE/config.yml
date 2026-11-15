@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 보안 문제 · Security issue
+    url: https://github.com/eddieee-git/mac-app-gitty/security/advisories/new
+    about: 공개하지 말고 비공개로 알려 주세요 · Report privately, not in a public issue
+  - name: 설치와 자주 묻는 질문 · Install and FAQ
+    url: https://github.com/eddieee-git/mac-app-gitty#설치
+    about: 처음 열 때 보안 경고, 권한 등 · First-launch warning, permissions, and more

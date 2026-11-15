@@ -157,7 +157,7 @@ struct CloneSheet: View {
                     ProgressView(tr("저장소 목록을 불러오는 중…"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if repos.isEmpty {
-                    Text(tr("gh CLI로 목록을 불러올 수 없습니다.\n위에 owner/repo 를 직접 입력하세요."))
+                    Text(tr("gh CLI로 목록을 불러올 수 없어요.\n위에 owner/repo 를 직접 입력하세요."))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -177,7 +177,7 @@ struct CloneSheet: View {
             .frame(height: 300)
 
             HStack {
-                Text(tr("처음 열 때 \(AppModel.reposDirectory.path)에 클론됩니다"))
+                Text(tr("처음 열 때 \(AppModel.reposDirectory.path)에 클론돼요"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Button(tr("취소")) { dismiss() }.keyboardShortcut(.cancelAction)

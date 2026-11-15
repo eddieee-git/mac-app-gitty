@@ -101,7 +101,7 @@ final class AppModel {
 
     func open(_ url: URL) async {
         guard FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) else {
-            errorMessage = tr("Git 저장소 폴더가 아닙니다: \(url.path)")
+            errorMessage = tr("Git 저장소 폴더가 아니에요: \(url.path)")
             return
         }
         // 같은 저장소를 여러 탭에서 열어도 git 작업이 겹치지 않게 하나를 함께 쓴다
@@ -129,7 +129,7 @@ final class AppModel {
                 return
             }
         }
-        let ok = await perform(tr("원격과 동기화 중…"), done: tr("최신 상태입니다")) {
+        let ok = await perform(tr("원격과 동기화 중…"), done: tr("최신 상태예요")) {
             await repo.prepareIdentity()
             await repo.prepareExcludes()
             try await repo.pull()
@@ -238,7 +238,7 @@ final class AppModel {
     func refresh() async {
         guard let repo else { return }
         cancelScheduledPush()
-        let ok = await perform(tr("원격과 동기화 중…"), done: tr("최신 상태입니다")) {
+        let ok = await perform(tr("원격과 동기화 중…"), done: tr("최신 상태예요")) {
             try await repo.pull()
             try await repo.push()   // 이전에 실패한 push가 있으면 함께 전송
             await repo.prepareLFS()
@@ -275,7 +275,7 @@ final class AppModel {
         let dir = targetDir ?? relativeDir
         let n = urls.count
         let label = removeLocalAfter ? tr("\(n)개 항목 이동 중…") : tr("\(n)개 항목 업로드 중…")
-        let done = removeLocalAfter ? tr("\(n)개 항목을 Git 저장소로 이동했습니다") : tr("\(n)개 항목을 Git 저장소로 업로드했습니다")
+        let done = removeLocalAfter ? tr("\(n)개 항목을 Git 저장소로 이동했어요") : tr("\(n)개 항목을 Git 저장소로 업로드했어요")
         let ok = await perform(label, done: done,
                                undoable: true) {
             try await repo.upload(urls, to: dir)
@@ -297,7 +297,7 @@ final class AppModel {
         guard let repo, let dir = folder == root ? "" : repoRelativePath(folder) else { return }
         let paths = urls.compactMap(repoRelativePath)
         guard !paths.isEmpty else { return }
-        await perform(tr("옮기는 중…"), done: tr("\(paths.count)개 항목을 /\(dir)(으)로 옮겼습니다"), undoable: true) {
+        await perform(tr("옮기는 중…"), done: tr("\(paths.count)개 항목을 /\(dir)(으)로 옮겼어요"), undoable: true) {
             try await repo.move(paths, toDir: dir)
         }
     }
@@ -307,7 +307,7 @@ final class AppModel {
         do {
             try FileOps.move(urls, into: folder)
             Log.info("move", "내 폴더 안에서 \(folder.path)(으)로 옮김: \(urls.map(\.lastPathComponent).joined(separator: ", "))")
-            statusMessage = tr("\(urls.count)개 항목을 \(folder.lastPathComponent)(으)로 옮겼습니다")
+            statusMessage = tr("\(urls.count)개 항목을 \(folder.lastPathComponent)(으)로 옮겼어요")
         } catch {
             Log.error("move", error.localizedDescription)
             errorMessage = error.localizedDescription
@@ -318,7 +318,7 @@ final class AppModel {
     func delete(_ items: [FileItem]) async {
         guard let repo, !items.isEmpty else { return }
         let paths = items.compactMap { repoRelativePath($0.url) }
-        await perform(tr("삭제하는 중…"), done: tr("\(items.count)개 항목을 삭제했습니다"), undoable: true) {
+        await perform(tr("삭제하는 중…"), done: tr("\(items.count)개 항목을 삭제했어요"), undoable: true) {
             try await repo.delete(paths)
         }
     }
@@ -328,16 +328,16 @@ final class AppModel {
         let newName = newName.trimmed
         guard !newName.isEmpty, newName != item.name else { return }
         guard !newName.contains("/"), newName != ".", newName != ".." else {
-            errorMessage = tr("이름에 / 를 사용할 수 없습니다.")
+            errorMessage = tr("이름에 / 를 사용할 수 없어요.")
             return
         }
         let siblings = existingNames(in: item.url.deletingLastPathComponent())
         if siblings.contains(where: { $0.lowercased() == newName.lowercased() && $0.lowercased() != item.name.lowercased() }) {
-            errorMessage = tr("같은 이름의 항목이 이미 있습니다: \(newName)")
+            errorMessage = tr("같은 이름의 항목이 이미 있어요: \(newName)")
             return
         }
         guard let path = repoRelativePath(item.url) else { return }
-        await perform(tr("이름 변경 중…"), done: tr("이름을 ‘\(newName)’(으)로 바꿨습니다"), undoable: true) {
+        await perform(tr("이름 변경 중…"), done: tr("이름을 ‘\(newName)’(으)로 바꿨어요"), undoable: true) {
             try await repo.rename(path, to: newName)
         }
     }
@@ -347,11 +347,11 @@ final class AppModel {
         let name = name.trimmed
         guard !name.isEmpty, !name.contains("/") else { return }
         if items.contains(where: { $0.name.lowercased() == name.lowercased() }) {
-            errorMessage = tr("같은 이름의 항목이 이미 있습니다: \(name)")
+            errorMessage = tr("같은 이름의 항목이 이미 있어요: \(name)")
             return
         }
         let path = relativeDir.isEmpty ? name : "\(relativeDir)/\(name)"
-        await perform(tr("폴더 만드는 중…"), done: tr("‘\(name)’ 폴더를 만들었습니다"), undoable: true) {
+        await perform(tr("폴더 만드는 중…"), done: tr("‘\(name)’ 폴더를 만들었어요"), undoable: true) {
             try await repo.createFolder(path)
         }
     }
@@ -401,11 +401,11 @@ final class AppModel {
 
         let repoPaths = urls.compactMap(repoRelativePath)
         if removeFromRepo, let repo, !repoPaths.isEmpty {
-            await perform(tr("내 폴더로 이동 중…"), done: tr("\(urls.count)개 항목을 내 폴더로 이동했습니다"), undoable: true) {
+            await perform(tr("내 폴더로 이동 중…"), done: tr("\(urls.count)개 항목을 내 폴더로 이동했어요"), undoable: true) {
                 try await repo.delete(repoPaths)
             }
         } else {
-            statusMessage = tr("\(urls.count)개 항목을 내 폴더에 복사했습니다")
+            statusMessage = tr("\(urls.count)개 항목을 내 폴더에 복사했어요")
         }
     }
 
@@ -448,7 +448,7 @@ final class AppModel {
     func restore(_ item: FileItem, to version: FileVersion) async {
         guard let repo, let path = repoRelativePath(item.url) else { return }
         let when = version.date.formatted(date: .abbreviated, time: .shortened)
-        await perform(tr("지난 버전으로 되돌리는 중…"), done: tr("\(item.name)을(를) \(when) 버전으로 되돌렸습니다"), undoable: true) {
+        await perform(tr("지난 버전으로 되돌리는 중…"), done: tr("\(item.name)을(를) \(when) 버전으로 되돌렸어요"), undoable: true) {
             try await repo.restore(path, to: version)
         }
     }
@@ -673,7 +673,7 @@ final class AppModel {
         let names = existingNames(in: local.dir)
         return TransferPlan(title: tr("내 폴더의 같은 이름 항목을 덮어쓸까요?"),
                             conflicts: urls.map(\.lastPathComponent).filter(names.contains),
-                            note: tr("기존 항목은 휴지통으로 이동합니다."),
+                            note: tr("기존 항목은 휴지통으로 이동해요."),
                             run: { Task {
                                 guard await self.materialize(urls) else { return }
                                 await self.copyToLocal(urls, removeFromRepo: removeFromRepo)

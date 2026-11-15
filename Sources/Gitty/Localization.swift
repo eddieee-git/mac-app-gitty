@@ -1,7 +1,7 @@
 import Foundation
 
 /// 화면 글자 번역. 소스는 한국어로 쓰고, 영어 화면이면 Resources/en.json의 번역을 쓴다.
-///   tr("‘\(name)’ 폴더를 만들었습니다")  → 키 "‘{}’ 폴더를 만들었습니다", 값 "Created folder ‘{}’"
+///   tr("‘\(name)’ 폴더를 만들었어요")  → 키 "‘{}’ 폴더를 만들었어요", 값 "Created folder ‘{}’"
 /// 끼워 넣은 값은 키에서 {}로 바뀌고, 번역에서 {} (순서대로) 또는 {1}, {2} (자리 지정)로 다시 들어간다.
 /// 번역이 없으면 한국어 그대로 보인다. 작업 기록(로그)은 번역하지 않는다.
 struct Tr: ExpressibleByStringInterpolation {

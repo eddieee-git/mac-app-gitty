@@ -1,5 +1,5 @@
 #!/bin/zsh
-# scripts/make-icon.swift로 그린 1024px 그림에서 Resources/AppIcon.icns와 docs/icon.png를 만든다.
+# scripts/make-icon.swift로 그린 1024px 그림에서 Resources/AppIcon.icns와 docs/images/icon.png를 만든다.
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build docs
@@ -13,6 +13,6 @@ for px in 16 32 128 256 512; do
     sips -z $((px * 2)) $((px * 2)) build/icon-1024.png --out "$iconset/icon_${px}x${px}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o Resources/AppIcon.icns
-sips -z 256 256 build/icon-1024.png --out docs/icon.png >/dev/null
+sips -z 256 256 build/icon-1024.png --out docs/images/icon.png >/dev/null
 echo Resources/AppIcon.icns
-echo docs/icon.png
+echo docs/images/icon.png
