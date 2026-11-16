@@ -8,7 +8,9 @@ import SwiftUI
 /// 다섯 앱이 함께 쓰는 업데이트.
 ///
 /// - 자동 확인(기본 켬): 켠 지 15초 뒤, 그 뒤로 한 시간마다, 잠자기에서 깼을 때 "하루가 지났으면" GitHub에 물어요.
-/// - 새 버전을 찾으면 메뉴 항목이 "새 버전 X 설치…"로 바뀌고 설정에 보여요. 자동 설치(기본 끔)를 켜면 알아서 설치해요.
+/// - 자동 설치(기본 켬): 새 버전을 찾으면 앱을 쓰고 있지 않을 때 알아서 받아 바꿔 넣고 다시 켜요.
+/// - 직접 확인("업데이트 확인…")하거나 "새 버전 X 설치…"를 누르면 묻지 않고 바로 설치해요.
+/// - 앱 안에서 설치할 수 없을 때(자동 설치를 껐거나, 바꿔 넣을 수 없는 위치이거나, 서명 없는 릴리스)만 창으로 알려요. 자동 확인은 버전마다 한 번만 알려요.
 /// - 내려받은 dmg는 Ed25519 `.sig`와 GitHub SHA-256으로 확인하고, 바꿔 넣기 전에 번들 ID·버전·코드 서명도 확인해요.
 /// - 받는 주소는 https GitHub만 허용해요.
 /// - GitHub API가 막히면(403·429) 릴리스 페이지 주소로 최신 버전을 알아내요.
@@ -117,6 +119,7 @@ final class AppUpdater: ObservableObject {
 
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
+    private var resignObserver: NSObjectProtocol?
     private let menuItems = NSHashTable<NSMenuItem>.weakObjects()
 
     init(_ config: Config) {
@@ -129,7 +132,7 @@ final class AppUpdater: ObservableObject {
         } else {
             autoCheck = true
         }
-        autoInstall = defaults.object(forKey: Self.autoInstallKey) as? Bool ?? false
+        autoInstall = defaults.object(forKey: Self.autoInstallKey) as? Bool ?? true
         lastCheck = defaults.object(forKey: Self.lastCheckKey) as? Date
     }
 
@@ -156,6 +159,12 @@ final class AppUpdater: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.checkIfDue() }
         }
+        // 앱을 쓰다가 다른 앱으로 넘어가면, 찾아 둔 새 버전을 그때 설치해요.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.installIfAllowed() }
+        }
     }
 
     // MARK: 확인
@@ -167,16 +176,40 @@ final class AppUpdater: ObservableObject {
         Task { await check(userInitiated: false) }
     }
 
-    /// "지금 확인" — 결과를 항상 창으로 알려요.
+    /// "지금 확인" — 새 버전이 있으면 바로 설치하고, 없으면 최신이라고 창으로 알려요.
     func checkNow() {
-        if let available { return offer(available) }
+        if let available { return installOrOffer(available) }
         guard !isBusy else { return }
         Task { await check(userInitiated: true) }
     }
 
-    /// 메뉴 항목과 설정의 버튼이 부르는 것: 새 버전이 있으면 설치를 묻고, 없으면 지금 확인해요.
+    /// 메뉴 항목과 설정의 버튼이 부르는 것: 새 버전이 있으면 바로 설치하고, 없으면 지금 확인해요.
     @objc func menuAction() {
-        if let available { offer(available) } else { checkNow() }
+        if let available { installOrOffer(available) } else { checkNow() }
+    }
+
+    /// 앱 안에서 설치할 수 있는 릴리스인지(dmg와 서명이 있고, 지금 자리에서 바꿔 넣거나 받아 열 수 있음).
+    private func canInstall(_ release: Release) -> Bool {
+        guard release.dmg != nil, release.signature != nil else { return false }
+        if case .openDownloadedDMG = config.installMode { return true }
+        return Self.canReplace(Bundle.main.bundleURL)
+    }
+
+    /// 사용자가 직접 고른 설치: 할 수 있으면 묻지 않고 바로 하고, 할 수 없으면 까닭과 릴리스 페이지를 알려요.
+    private func installOrOffer(_ release: Release) {
+        if canInstall(release) {
+            Task { await install(release, userInitiated: true) }
+        } else {
+            offer(release)
+        }
+    }
+
+    /// 자동 확인에서 찾았지만 알아서 설치하지 않을 때: 그 버전은 한 번만 창으로 알려요.
+    private func offerOnce(_ release: Release) {
+        let key = "offeredUpdateVersion"
+        guard UserDefaults.standard.string(forKey: key) != release.version else { return }
+        UserDefaults.standard.set(release.version, forKey: key)
+        offer(release)
     }
 
     private func check(userInitiated: Bool) async {
@@ -194,7 +227,13 @@ final class AppUpdater: ObservableObject {
             }
             config.log("update: found \(release.version)")
             state = .available(release)
-            if userInitiated { offer(release) } else { installIfAllowed() }
+            if userInitiated {
+                installOrOffer(release)
+            } else if autoInstall, canInstallInPlace, canInstall(release) {
+                installIfAllowed()   // 앱을 쓰는 중이면 한 시간마다 다시 봐요
+            } else {
+                offerOnce(release)
+            }
         } catch {
             config.log("update check failed: \(error.localizedDescription)")
             // 자동 확인이 실패했을 때는 이미 찾아 둔 새 버전을 잃지 않게 해요. 한 시간 뒤 다시 시도해요.
@@ -736,7 +775,7 @@ struct AppUpdaterSection: View {
                     .lineLimit(2)
                 Spacer()
                 Button(updater.available == nil ? updater.text("지금 확인", "Check Now")
-                                                : updater.text("받기…", "Get…")) {
+                : (updater.canInstallInPlace ? updater.text("설치", "Install") : updater.text("받기…", "Get…"))) {
                     updater.menuAction()
                 }
                 .disabled(updater.isBusy)

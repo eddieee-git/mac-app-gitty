@@ -94,7 +94,7 @@ After that, Gitty tells you about new versions. You can also check with **Gitty 
 | Download large files only when opened or copied | Doesn't fetch every large (LFS) file up front, so repositories open faster (off by default) |
 | Language | Follow system / 한국어 / English. Reopen Gitty to apply |
 | Check for new versions automatically | Checks GitHub once a day (on by default) |
-| Install new versions automatically | Installs a found update by itself while you aren't using Gitty (off by default) |
+| Install new versions automatically | Installs a found update by itself and relaunches while you aren't using Gitty (on by default) |
 | Keep the activity log in a file | Records uploaded and downloaded file names and paths in `~/Library/Logs/Gitty` |
 
 ## FAQ
