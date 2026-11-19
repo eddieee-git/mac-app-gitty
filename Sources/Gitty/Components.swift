@@ -14,6 +14,8 @@ struct FileTable<MenuContent: View>: View {
     let emptyTitle: String
     let emptyHint: String
     let onOpen: (FileItem) -> Void
+    /// 더블클릭. 없으면 열기와 같다. (양쪽 패널은 파일 더블클릭 = 반대쪽으로 복사)
+    var onDoubleClick: (([FileItem]) -> Void)? = nil
     let onDelete: ([FileItem]) -> Void
     /// 키보드: Tab으로 반대쪽 패널, ⌘↑로 상위 폴더
     var focus: FocusState<PaneID?>.Binding
@@ -39,7 +41,8 @@ struct FileTable<MenuContent: View>: View {
 
     var body: some View {
         if icons {
-            FileGrid(pane: pane, rows: sorted, selection: $selection, onOpen: onOpen, onDelete: onDelete,
+            FileGrid(pane: pane, rows: sorted, selection: $selection, onOpen: onOpen,
+                     onDoubleClick: onDoubleClick ?? { $0.forEach(onOpen) }, onDelete: onDelete,
                      badge: badge, menu: menu)
                 .focused(focus, equals: paneID)
                 .overlay { emptyOverlay }
@@ -109,7 +112,8 @@ struct FileTable<MenuContent: View>: View {
         .contextMenu(forSelectionType: URL.self) { ids in
             menu(items.filter { ids.contains($0.id) })
         } primaryAction: { ids in
-            items.filter { ids.contains($0.id) }.forEach(onOpen)
+            let picked = items.filter { ids.contains($0.id) }
+            if let onDoubleClick { onDoubleClick(picked) } else { picked.forEach(onOpen) }
         }
         .onDeleteCommand {
             let selected = items.filter { selection.contains($0.id) }

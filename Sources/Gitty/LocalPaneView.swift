@@ -139,6 +139,11 @@ struct LocalPaneView: View {
                        : (local.loadError ?? tr("오른쪽 Git 폴더의 파일을\n여기로 끌어다 놓으면 내려받아요")))
                     : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
+                  onDoubleClick: { items in
+                      // 파일을 더블클릭하면 Git으로 올리고, 폴더면 들어간다
+                      let files = items.filter { !$0.isDirectory }
+                      if files.isEmpty { items.first.map(open) } else { sendToRepo(files, move: false) }
+                  },
                   onDelete: trash,
                   focus: focus, paneID: .local, onParent: { local.goUp() }, icons: icons) { items in
             if items.isEmpty {

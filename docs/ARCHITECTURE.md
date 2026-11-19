@@ -5,10 +5,11 @@ Gitty를 고칠 사람을 위한 짧은 안내예요. SwiftUI 앱이고, git은 
 ## 큰 그림
 
 ```
-GittyApp ─ ContentView ─┬─ WelcomeView (저장소 고르기, 첫 실행 안내)
-                        └─ BrowserView ─┬─ LocalPaneView (왼쪽: 내 Mac)
-                                        ├─ RepoPaneView  (오른쪽: Git 저장소)
-                                        └─ LogPanel      (아래: 진행 로그)
+GittyApp ─ MainWindow(창·탭마다 AppModel 하나) ─ ContentView ─┬─ WelcomeView (저장소 고르기, 첫 실행 안내)
+                                                                └─ BrowserView ─┬─ LocalPaneView (왼쪽: 내 Mac)
+                                                                                ├─ TransferBar   (가운데: ▶ ◀ 복사, ⇄ 맞추기)
+                                                                                ├─ RepoPaneView  (오른쪽: Git 저장소)
+                                                                                └─ LogPanel      (아래: 진행 로그)
 
 AppModel (@MainActor, 화면 상태) ── GitRepo (actor, git 명령) ── Shell (Process 실행)
 ```
@@ -40,7 +41,7 @@ rebase가 충돌하면 취소하고 `merge --no-ff`로 다시 합친다. 그래�
 
 | 파일 | 하는 일 |
 |---|---|
-| `GittyApp.swift` | 앱·창·메뉴, 종료 처리 (남은 push, 받아 둔 업데이트 설치) |
+| `GittyApp.swift` | 앱·창(`MainWindow`)·탭·메뉴, 종료 전에 남은 push 마치기 |
 | `AppModel.swift` | 화면 상태, 작업 틀(`perform`), push 모으기, 되돌리기, 변경 기록 |
 | `GitRepo.swift` | git 명령: 클론, pull/push, 커밋, 업로드(LFS 포함), 이름 변경, 이동, 삭제, revert, 기록, 지난 버전 꺼내기 |
 | `Shell.swift` | `Process` 실행, stderr를 줄 단위로 넘겨 진행률 표시, stdout을 파일로 받기 |
@@ -64,7 +65,10 @@ rebase가 충돌하면 취소하고 `merge --no-ff`로 다시 합친다. 그래�
 | `IconCache.swift` | 파일 아이콘 기억 |
 | `Localization.swift` | 화면 글자 번역 `tr("…")` (영어는 `Resources/en.json`) |
 | `SetupCheck.swift` | 첫 실행 안내 (git, gh 로그인, git-lfs) |
-| `Updater.swift` / `UpdateView.swift` | 업데이트 확인·내려받기·서명 확인·설치, 알림 창 |
+| `AppUpdater.swift` | 업데이트 확인·내려받기·확인·설치, 설정의 업데이트 칸. **다섯 앱 공통, 여기서 고치지 않음** |
+| `UpdaterSetup.swift` | 공통 업데이트에 넣는 Gitty 값 (저장소, 공개 키, 지금 다시 시작해도 되는지) |
+| `UpdateView.swift` | Gitty 메뉴의 "업데이트 확인…"과 창 위 알림 띠 |
+| `AppAbout.swift` | 설정의 정보 칸 (버전, 링크, 다른 앱). **다섯 앱 공통** |
 | `Log.swift`, `LogPanel.swift`, `LogView.swift` | 작업 기록 파일(토큰 가림), 진행 로그 |
 | `Progress.swift` | 진행률 모으기 (0.1초에 한 번), git 진행 출력 해석 |
 
@@ -79,16 +83,17 @@ SwiftUI `.onDrop`은 `Table`(NSTableView) 뒤에 깔려서 놓기를 받지 못�
 
 ## 업데이트
 
-1. 6시간마다 GitHub `releases/latest`를 확인한다 (`updateFeedURL` 기본값으로 바꿔 시험할 수 있다).
-2. 릴리스에는 `Gitty-x.y.z.dmg`와 `Gitty-x.y.z.dmg.sig`가 있어야 한다. `.sig`는 dmg의 Ed25519 서명이다.
-3. 받은 dmg를 `Info.plist`의 `GittyUpdatePublicKey`로 확인하고, 맞지 않으면 버린다.
-4. 기본은 알림 창에서 내려받아 dmg를 열어 준다. 자동 설치를 켜면 앱을 꺼내 두었다가 종료할 때 작은 셸 스크립트가 바꿔 끼운다(실패하면 이전 버전으로 되돌림).
+다섯 앱 공통 `AppUpdater.swift`가 한다(원본 `../mac-app/shared/AppUpdater.swift`, `../mac-app/scripts/sync-shared.sh`로 복사). Gitty에만 해당하는 값은 `UpdaterSetup.swift`.
 
-서명 키 관리는 README의 "업데이트 서명"을 보세요.
+1. 자동 확인(기본 켬): 켠 지 15초 뒤, 그 뒤 한 시간마다, 잠자기에서 깼을 때 "하루가 지났으면" GitHub `releases/latest`에 묻는다. API가 403·429로 막히면 릴리스 페이지 주소로 버전을 알아낸다.
+2. 릴리스에는 `Gitty-x.y.z.dmg`와 `Gitty-x.y.z.dmg.sig`(Ed25519 서명)가 있어야 한다. 받은 dmg는 서명·GitHub SHA-256으로, 바꿔 넣기 전에 번들 ID·버전·코드 서명으로 확인한다.
+3. 새 버전을 찾으면 Gitty 메뉴 항목이 "새 버전 X 설치…"로 바뀌고 창 위에 알림 띠가 뜬다. 자동 설치(기본 끔)는 올리는 중이거나 남은 push가 없을 때만 바꿔 넣고 다시 켠다(`canRestartNow`).
+
+서명 키 관리는 [CLAUDE.md](../CLAUDE.md)의 "업데이트"를 보세요.
 
 ## 화면 글자 번역
 
-화면에 보이는 한국어는 모두 `tr("…")`로 감싼다. 끼워 넣은 값은 키에서 `{}`가 된다(`tr("‘\(name)’ 폴더를 만들었어요")` → 키 `‘{}’ 폴더를 만들었습니다`). 영어는 `Resources/en.json`에 있고, 번역이 없으면 한국어 그대로 보인다. 작업 기록(로그)은 번역하지 않는다.
+화면에 보이는 한국어는 모두 `tr("…")`로 감싼다. 끼워 넣은 값은 키에서 `{}`가 된다(`tr("‘\(name)’ 폴더를 만들었어요")` → 키 `‘{}’ 폴더를 만들었어요`, 영어 `Created folder ‘{}’`). 영어는 `Resources/en.json`에 있고, 번역이 없으면 한국어 그대로 보인다. 작업 기록(로그)은 번역하지 않는다.
 
 - `python3 scripts/l10n.py keys`: 빠진 번역을 알려 준다 (빠지면 실패).
 - `python3 scripts/l10n.py wrap`: 새로 쓴 한국어 글자를 `tr()`로 감싼다. 파일 이름처럼 번역하면 안 되는 글자는 그 줄(또는 바로 윗줄)에 `// no-tr`.
@@ -102,3 +107,13 @@ SwiftUI `.onDrop`은 `Table`(NSTableView) 뒤에 깔려서 놓기를 받지 못�
 - `./scripts/test.sh`: 앱 소스와 `Tests/harness/main.swift`를 함께 컴파일해 돌린다. 로컬 bare 저장소를 원격으로 쓰므로 GitHub에 아무것도 보내지 않는다. (Command Line Tools만 있어도 되도록 XCTest를 쓰지 않는다.)
 - `./scripts/build-app.sh`: arm64·x86_64를 따로 빌드해 합치고, 서명(ad-hoc)하고 dmg를 만든다.
 - `./scripts/release.sh`: 빌드 → dmg 서명 → 태그 → GitHub 릴리스(dmg, .sig). 버전은 `Info.plist`, 노트는 `docs/releases/v<버전>.md`.
+- GitHub Actions(`.github/workflows/test.yml`): push마다 `swift build`, `scripts/test.sh`, `scripts/l10n.py keys`(번역 빠짐)를 돌린다.
+
+## 화면 확인 (사람 손 없이)
+
+마우스로 눌러 볼 수 없을 때 쓰는 방법이다. 앱 소스(GittyApp.swift 빼고)와 작은 `main.swift`를 함께 `swiftc`로 컴파일해서, `NSHostingView`를 화면 밖 창에 띄우고 `cacheDisplay`로 PNG를 만든다.
+
+- 창은 `orderFrontRegardless()`로 실제로 띄워야 다시 그려진다 (화면 밖 좌표 `-4000, -4000`).
+- 기다릴 때 `RunLoop.run`이 아니라 `await Task.sleep`을 쓴다. 메인 스레드를 막으면 비동기 결과(기록·트리)가 안 들어온다.
+- 키 입력은 `NSEvent.keyEvent`로 만들어 `window.sendEvent`.
+- 영어 화면: 실행 파일 옆에 `en.json`을 두고 `appLanguage`를 `en`으로.

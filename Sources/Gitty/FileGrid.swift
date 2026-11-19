@@ -8,6 +8,7 @@ struct FileGrid<MenuContent: View>: View {
     let rows: [FileItem]
     @Binding var selection: Set<URL>
     let onOpen: (FileItem) -> Void
+    let onDoubleClick: ([FileItem]) -> Void
     let onDelete: ([FileItem]) -> Void
     let badge: (FileItem) -> FileBadge?
     @ViewBuilder let menu: ([FileItem]) -> MenuContent
@@ -73,7 +74,10 @@ struct FileGrid<MenuContent: View>: View {
         .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
         .background { if item.isDirectory { DropFolderMarker(url: item.url) } }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onOpen(item) }
+        .onTapGesture(count: 2) {
+            // 고른 것 위에서 더블클릭하면 고른 것 모두, 아니면 그 항목만
+            onDoubleClick(selected ? rows.filter { selection.contains($0.id) } : [item])
+        }
         .onTapGesture { click(item) }
         .contextMenu {
             // 오른쪽 클릭한 항목이 선택에 없으면 그 항목만

@@ -116,6 +116,11 @@ struct RepoPaneView: View {
                   emptyTitle: results == nil ? (model.loading ? tr("불러오는 중…") : tr("빈 폴더예요")) : (searching ? tr("찾는 중…") : tr("검색 결과가 없어요")),
                   emptyHint: results == nil ? tr("왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드돼요") : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
+                  onDoubleClick: { items in
+                      // 파일을 더블클릭하면 내 폴더로 받고, 폴더면 들어간다
+                      let files = items.filter { !$0.isDirectory }
+                      if files.isEmpty { items.first.map(open) } else { sendToLocal(files, move: false) }
+                  },
                   onDelete: { deleting = $0 },
                   focus: focus, paneID: .repo, onParent: { if !model.path.isEmpty { model.path.removeLast() } },
                   badge: model.badge(for:), icons: icons) { items in
