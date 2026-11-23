@@ -14,6 +14,8 @@ struct LocalPaneView: View {
     }
     @State private var nameRequest: NameRequest?
     @State private var pending: PendingTransfer?
+    /// 처음 파일을 더블클릭했을 때 무엇을 할지 묻는 중인 파일들
+    @State private var hintFiles: [FileItem]?
     @State private var dropTarget: DropTarget = .none
     @State private var treeDropTarget: DropTarget = .none
     @State private var query = ""
@@ -64,6 +66,14 @@ struct LocalPaneView: View {
             } list: {
                 FileDropHost(name: Self.paneName, target: $dropTarget, accepts: accepts, onDrop: receive) {
                     fileTable
+                }
+                .overlay(alignment: .top) {
+                    if let files = hintFiles {
+                        DoubleClickHint(
+                            onCopy: { DoubleClickAction.set("copy"); hintFiles = nil; sendToRepo(files, move: false) },
+                            onOpen: { DoubleClickAction.set("open"); hintFiles = nil; files.forEach(open) },
+                            onDismiss: { hintFiles = nil })
+                    }
                 }
             }
         }
@@ -140,9 +150,14 @@ struct LocalPaneView: View {
                     : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
                   onDoubleClick: { items in
-                      // 파일을 더블클릭하면 Git으로 올리고, 폴더면 들어간다
+                      // 파일을 더블클릭하면 Git으로 올리고, 폴더면 들어간다 (설정에서 "열기"로 바꿀 수 있음, 처음엔 한 번 물음)
                       let files = items.filter { !$0.isDirectory }
-                      if files.isEmpty { items.first.map(open) } else { sendToRepo(files, move: false) }
+                      if files.isEmpty { items.first.map(open); return }
+                      switch DoubleClickAction.current {
+                      case "open": files.forEach(open)
+                      case "copy": sendToRepo(files, move: false)
+                      default: hintFiles = files
+                      }
                   },
                   onDelete: trash,
                   focus: focus, paneID: .local, onParent: { local.goUp() }, icons: icons) { items in

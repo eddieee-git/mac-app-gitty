@@ -149,6 +149,14 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         try await repo.push()
         check(sh("git --git-dir=\(remote.path) rev-parse main", in: work) == sh("git rev-parse HEAD", in: clone), "push 한 번에 모두 올라감")
 
+        // git이 아는 경로를 한 번에 묻기 (지워진 파일·폴더)
+        let known = await repo.tracked(["other", "other/note.txt", "없는/파일.txt", "docs"])
+        check(Set(known) == ["other", "other/note.txt", "docs"], "아는 경로만 골라냄 (\(known.sorted()))")
+        let manyPaths = (0..<1200).map { "nope/\($0).txt" } + ["other/note.txt"]
+        let t0 = Date()
+        let manyKnown = await repo.tracked(manyPaths)
+        check(manyKnown == ["other/note.txt"] && Date().timeIntervalSince(t0) < 2, String(format: "1,200개도 한 번에 (%.2f초)", Date().timeIntervalSince(t0)))
+
         // 파일 상태
         try "edited".write(to: clone.appendingPathComponent("other/note.txt"), atomically: true, encoding: .utf8)
         var fileStatus = await repo.status()
@@ -232,6 +240,16 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
             check(content("a.txt") == "mine2" && !open, "나중에: 내 쪽 그대로 두고 그만둠")
         }
     } catch { check(false, "충돌 시험 실패: \(error)") }
+
+    section("git 오류를 쉬운 말로")
+    check(GitErrors.kind(of: "fatal: unable to access 'https://github.com/a/b.git/': Could not resolve host: github.com") == .offline, "인터넷 끊김")
+    check(GitErrors.kind(of: "remote: Invalid username or password.\nfatal: Authentication failed for 'https://github.com/a/b.git/'") == .auth, "로그인 풀림")
+    check(GitErrors.kind(of: "remote: Repository not found.\nfatal: repository 'https://github.com/a/b.git/' not found") == .notFound, "저장소 없음")
+    check(GitErrors.kind(of: "remote: Permission to a/b.git denied to someone.\nfatal: unable to access 'https://github.com/a/b.git/': The requested URL returned error: 403") == .denied, "권한 없음 (403)")
+    check(GitErrors.kind(of: "remote: error: GH001: Large files detected.") == .tooLarge, "100MB 넘는 파일")
+    check(GitErrors.kind(of: "fatal: Unable to create '/x/.git/index.lock': File exists.") == .locked, "다른 git 작업 중")
+    check(GitErrors.kind(of: "error: pathspec 'x' did not match") == nil && GitErrors.friendly("이상한 오류") == "이상한 오류", "모르는 오류는 원문 그대로")
+    check(GitErrors.isOffline(GittyError(message: GitErrors.friendly("Could not resolve host: github.com"))), "오프라인 알아보기")
 
     section("올리기 전 안전 확인")
     check(UploadSafety.isSensitive(".env") && UploadSafety.isSensitive(".env.production") && !UploadSafety.isSensitive(".env.example"), ".env 파일")

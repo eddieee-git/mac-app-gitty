@@ -84,7 +84,7 @@ After that, Gitty tells you about new versions. You can also check with **Gitty 
 | ⌥⌘Z | Undo the last Git action |
 | ⌥⌘L | Full activity log |
 | ⌘⌫ | Delete the selection (Git asks first; my folder goes to the Trash) |
-| Double-click | Open a folder; copy a file to the other side (my folder → Git uploads, Git → my folder downloads) |
+| Double-click | Open a folder; copy a file to the other side (my folder → Git uploads, Git → my folder downloads). Asks once the first time; you can switch it to "Open" in Settings |
 | Return | Open a file |
 
 ## Settings

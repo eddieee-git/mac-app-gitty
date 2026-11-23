@@ -70,6 +70,7 @@ struct BrowserView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Finder 등 다른 곳에서 바뀐 내용을 반영
             model.local.reload()
+            model.markStatusDirty()
             if !model.isBusy { model.reload() }
         }
     }

@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(autoSyncKey) private var autoSyncMinutes = 5
     @AppStorage(Log.fileLoggingKey) private var fileLogging = true
     @AppStorage(Loc.languageKey) private var language = "system"
+    @AppStorage(DoubleClickAction.key) private var doubleClick = ""
     @AppStorage(GitRepo.lfsOnDemandKey) private var lfsOnDemand = false
     @State private var lfsVersion: String?
     @State private var checkedLFS = false
@@ -55,6 +56,16 @@ struct SettingsView: View {
                     Text("English").tag("en")
                 }
                 Text(tr("언어를 바꾸면 Gitty를 다시 열어야 적용돼요."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker(tr("파일 더블클릭"), selection: Binding(
+                    get: { doubleClick.isEmpty ? "copy" : doubleClick },
+                    set: { doubleClick = $0 })) {
+                    Text(tr("반대쪽으로 복사")).tag("copy")
+                    Text(tr("열기")).tag("open")
+                }
+                .pickerStyle(.segmented)
+                Text(tr("반대쪽으로 복사: 내 폴더의 파일은 Git으로 올리고, Git의 파일은 내 폴더로 받아요. 어느 쪽이든 Return은 파일을 열어요."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -16,6 +16,8 @@ struct RepoPaneView: View {
     @State private var deleting: [FileItem] = []
     @State private var historyItem: FileItem?
     @State private var pending: PendingTransfer?
+    /// 처음 파일을 더블클릭했을 때 무엇을 할지 묻는 중인 파일들
+    @State private var hintFiles: [FileItem]?
     @State private var dropTarget: DropTarget = .none
     @State private var treeDropTarget: DropTarget = .none
     @State private var query = ""
@@ -65,6 +67,14 @@ struct RepoPaneView: View {
             } list: {
                 FileDropHost(name: Self.paneName, target: $dropTarget, accepts: accepts, onDrop: receive) {
                     fileTable
+                }
+                .overlay(alignment: .top) {
+                    if let files = hintFiles {
+                        DoubleClickHint(
+                            onCopy: { DoubleClickAction.set("copy"); hintFiles = nil; sendToLocal(files, move: false) },
+                            onOpen: { DoubleClickAction.set("open"); hintFiles = nil; files.forEach(open) },
+                            onDismiss: { hintFiles = nil })
+                    }
                 }
             }
         }
@@ -117,9 +127,14 @@ struct RepoPaneView: View {
                   emptyHint: results == nil ? tr("왼쪽 내 폴더나 Finder에서\n파일을 끌어다 놓으면 업로드돼요") : tr("하위 폴더까지 이름으로 찾아요"),
                   onOpen: open,
                   onDoubleClick: { items in
-                      // 파일을 더블클릭하면 내 폴더로 받고, 폴더면 들어간다
+                      // 파일을 더블클릭하면 내 폴더로 받고, 폴더면 들어간다 (설정에서 "열기"로 바꿀 수 있음, 처음엔 한 번 물음)
                       let files = items.filter { !$0.isDirectory }
-                      if files.isEmpty { items.first.map(open) } else { sendToLocal(files, move: false) }
+                      if files.isEmpty { items.first.map(open); return }
+                      switch DoubleClickAction.current {
+                      case "open": files.forEach(open)
+                      case "copy": sendToLocal(files, move: false)
+                      default: hintFiles = files
+                      }
                   },
                   onDelete: { deleting = $0 },
                   focus: focus, paneID: .repo, onParent: { if !model.path.isEmpty { model.path.removeLast() } },

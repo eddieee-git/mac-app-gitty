@@ -89,6 +89,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MainWindow: View {
     /// 창이 처음 나타날 때 한 번만 만든다 (@State 초기값은 SwiftUI가 여러 번 계산할 수 있어서)
     @State private var model: AppModel?
+    /// 창(탭)마다 열어 둔 저장소와 폴더. 다시 켜면 macOS가 창을 되살리면서 이 값도 돌려준다.
+    @SceneStorage("gitty.repo") private var savedRepo = ""
+    @SceneStorage("gitty.repoPath") private var savedPath = ""
+    /// 창을 되살리지 않는 설정이면 첫 창에서만 마지막으로 연 저장소를 연다 (새 탭은 빈 화면)
+    @MainActor private static var restoredOnce = false
+    private static let lastRepoKey = "lastOpenRepo"
+    private static let lastPathKey = "lastOpenRepoPath"
 
     var body: some View {
         Group {
@@ -96,12 +103,45 @@ struct MainWindow: View {
                 ContentView()
                     .environment(model)
                     .focusedSceneValue(\.appModel, model)
+                    .onChange(of: model.root) { remember(model) }
+                    .onChange(of: model.path) { remember(model) }
             } else {
                 Color.clear.frame(minWidth: 880, minHeight: 520)
             }
         }
-        .onAppear { if model == nil { model = AppModel() } }
+        .onAppear {
+            guard model == nil else { return }
+            let m = AppModel()
+            model = m
+            restore(into: m)
+        }
         .background(WindowTabbing())
+    }
+
+    private func restore(into model: AppModel) {
+        var repo = savedRepo, path = savedPath
+        if repo.isEmpty && !Self.restoredOnce {
+            repo = UserDefaults.standard.string(forKey: Self.lastRepoKey) ?? ""
+            path = UserDefaults.standard.string(forKey: Self.lastPathKey) ?? ""
+        }
+        Self.restoredOnce = true
+        guard !repo.isEmpty, FileManager.default.fileExists(atPath: repo + "/.git") else { return }
+        Log.info("repo", "지난번에 열어 둔 저장소 다시 열기: \(repo)" + (path.isEmpty ? "" : " /\(path)"))
+        Task {
+            await model.open(URL(fileURLWithPath: repo, isDirectory: true))
+            guard model.root != nil, !path.isEmpty else { return }
+            let parts = path.split(separator: "/").map(String.init)
+            // 그사이 지워진 폴더면 남아 있는 위 폴더까지만
+            model.path = parts
+        }
+    }
+
+    /// 지금 연 저장소와 폴더를 기억한다. 저장소 목록으로 돌아가면 지운다(다음에 켤 때 목록부터).
+    private func remember(_ model: AppModel) {
+        savedRepo = model.root?.path ?? ""
+        savedPath = model.root == nil ? "" : model.relativeDir
+        UserDefaults.standard.set(savedRepo, forKey: Self.lastRepoKey)
+        UserDefaults.standard.set(savedPath, forKey: Self.lastPathKey)
     }
 }
 

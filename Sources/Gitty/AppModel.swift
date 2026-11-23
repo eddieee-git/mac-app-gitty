@@ -16,8 +16,15 @@ final class AppModel {
     /// 저장소에서 지금 보고 있는 폴더를 지켜본다 (Finder 등에서 바꾼 것 반영). Git 작업 중에는 작업이 끝나며 다시 읽는다.
     @ObservationIgnored private lazy var watcher = FolderWatcher { [weak self] in
         guard let self, !self.isBusy, !self.loading else { return }
+        self.statusDirty = true
         self.reload()
     }
+    /// 파일 상태(git status)를 다시 검사해야 하는지. 폴더만 옮겨 다닐 때는 저장소 전체를 다시 검사하지 않는다
+    /// (큰 저장소에서 폴더를 열 때마다 몇 초씩 걸리므로). 파일이 바뀌었을 법할 때만 켠다.
+    @ObservationIgnored private var statusDirty = true
+
+    /// Finder 등 다른 곳에서 저장소 파일을 고쳤을 수 있을 때 (앱으로 돌아왔을 때 등)
+    func markStatusDirty() { statusDirty = true }
     /// 다시 읽을 때마다 올라간다. 폴더 트리가 이 값을 보고 새로 그린다.
     private(set) var revision = 0
     nonisolated static let repoHidden: Set<String> = [".git", ".DS_Store", ".gitkeep"]
@@ -222,7 +229,7 @@ final class AppModel {
             items = list
             loading = false
             revision += 1
-            if !isBusy { Task { await refreshStatus() } }
+            if !isBusy && statusDirty { Task { await refreshStatus() } }
             watcher.watch(kept.reduce(root) { $0.appendingPathComponent($1, isDirectory: true) })
         }
         if changedDir {
@@ -544,6 +551,7 @@ final class AppModel {
 
     func refreshStatus() async {
         guard let repo else { repoStatus = RepoStatus(); return }
+        statusDirty = false
         let s = await repo.status()
         if s != repoStatus { repoStatus = s }
     }
@@ -737,7 +745,11 @@ final class AppModel {
             conflicts = conflict.files
             statusMessage = tr("원격과 충돌한 파일이 있어요")
         } catch {
-            if quiet {
+            if GitErrors.isOffline(error) {
+                // 오프라인은 창을 띄우지 않는다. 커밋은 남아 있고, 연결되면 자동 동기화·다시 시도로 올라간다.
+                Log.error(quiet ? "자동 동기화" : "작업", "오프라인: \(label)\n\(error.localizedDescription)")
+                statusMessage = tr("오프라인이에요 · 연결되면 올려요")
+            } else if quiet {
                 Log.error("자동 동기화", error.localizedDescription)
                 statusMessage = tr("자동 동기화 실패 (작업 기록 참고)")
             } else {

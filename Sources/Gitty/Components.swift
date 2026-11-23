@@ -650,3 +650,46 @@ struct LayoutToggleButton: View {
         .help(stacked ? tr("폴더 트리를 파일 목록 왼쪽으로") : tr("폴더 트리를 파일 목록 위로"))
     }
 }
+
+// MARK: - 파일 더블클릭
+
+/// 파일 더블클릭 동작 (설정 → 화면). 비어 있으면 아직 정하지 않아서, 처음 더블클릭할 때 한 번 묻는다.
+enum DoubleClickAction {
+    static let key = "doubleClickAction"   // "copy" | "open" | ""
+    static var current: String { UserDefaults.standard.string(forKey: key) ?? "" }
+    static func set(_ value: String) { UserDefaults.standard.set(value, forKey: key) }
+}
+
+/// 처음 파일을 더블클릭했을 때 목록 위에 뜨는 안내. 고르면 기억하고 다시 묻지 않는다.
+struct DoubleClickHint: View {
+    let onCopy: () -> Void
+    let onOpen: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle").foregroundStyle(.tint)
+            Text(tr("더블클릭하면 반대쪽으로 복사돼요. 파일 열기는 Return이에요."))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button(tr("이렇게 쓰기"), action: onCopy)
+                .keyboardShortcut(.defaultAction)
+            Button(tr("더블클릭은 열기로"), action: onOpen)
+            Button(action: onDismiss) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(tr("닫기"))
+                .help(tr("이번에는 아무것도 하지 않아요. 다음에 다시 물어요."))
+        }
+        .font(.callout)
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))   // 뒤 목록이 비치지 않게
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.4)))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        .padding(.horizontal, 10)
+        .padding(.top, 30)
+    }
+}

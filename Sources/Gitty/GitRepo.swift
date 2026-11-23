@@ -121,7 +121,7 @@ actor GitRepo {
         let r = await result(args, streaming: streaming)
         guard r.status == 0 else {
             if Cancellation.isRequested { throw CancellationError() }
-            throw GittyError(message: r.errorText)
+            throw GittyError(message: GitErrors.friendly(r.errorText))
         }
         return r.stdout
     }
@@ -160,7 +160,7 @@ actor GitRepo {
         guard r.status == 0 else {
             Log.error("clone", "실패 \(r.status)\n\(r.errorText)")
             try? FileManager.default.removeItem(at: dest)
-            throw GittyError(message: r.errorText)
+            throw GittyError(message: GitErrors.friendly(r.errorText))
         }
         return dest
     }
@@ -498,15 +498,13 @@ actor GitRepo {
     /// 변경이 없으면 아무것도 하지 않는다. push는 AppModel이 연달아 한 작업을 모아서 한 번에 한다.
     private func commit(_ message: String, paths: [String]) async throws {
         reporter?.begin(tr("커밋 준비 중"))
+        // 지금 있거나(새로 생김·바뀜) git이 알고 있는(지워짐·옮겨짐) 경로만 넘긴다. 없는 경로를 넘기면 git add가 실패한다.
         var stage: [String] = []
+        var missing: [String] = []
         for path in Set(paths) where !path.isEmpty {
-            // 지금 있거나(새로 생김·바뀜) git이 알고 있는(지워짐·옮겨짐) 경로만 넘긴다. 없는 경로를 넘기면 git add가 실패한다.
-            if FileManager.default.fileExists(atPath: url(for: path).path) {
-                stage.append(path)
-            } else if await result(["--literal-pathspecs", "ls-files", "--error-unmatch", "--", path], probe: true).status == 0 {
-                stage.append(path)
-            }
+            if FileManager.default.fileExists(atPath: url(for: path).path) { stage.append(path) } else { missing.append(path) }
         }
+        stage += await tracked(missing)
         // --literal-pathspecs: 이름에 *, ? 같은 글자가 있어도 패턴이 아니라 그 이름 그대로
         if !stage.isEmpty {
             try await git(["--literal-pathspecs", "add", "-A", "--"] + stage.sorted())
@@ -521,6 +519,28 @@ actor GitRepo {
         if let full = try? await git(["rev-parse", "HEAD"]).trimmed {
             lastCommit = CommitRef(hash: full, message: message)
         }
+    }
+
+    /// 경로들 중 git이 알고 있는 것 (파일이거나, 안에 추적 중인 파일이 있는 폴더).
+    /// 경로마다 git을 따로 부르면 수천 개를 지울 때 느려서, 500개씩 한 번에 묻는다.
+    func tracked(_ paths: [String]) async -> [String] {
+        var known: [String] = []
+        var start = 0
+        while start < paths.count {
+            let chunk = Array(paths[start..<min(start + 500, paths.count)])
+            start += 500
+            let out = await result(["--literal-pathspecs", "ls-files", "-z", "--"] + chunk, probe: true).stdout
+            // 나온 파일과 그 위 폴더들을 모두 모아 두고 찾는다
+            var found = Set<String>()
+            for file in out.split(separator: "\0").map(String.init) {
+                var p = file
+                while !p.isEmpty, found.insert(p).inserted {
+                    p = (p as NSString).deletingLastPathComponent
+                }
+            }
+            known += chunk.filter(found.contains)
+        }
+        return known
     }
 
     /// 마지막 commit()이 만든 커밋을 가져간다 (없으면 nil: 바뀐 게 없었음)
