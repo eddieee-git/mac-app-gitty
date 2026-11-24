@@ -15,7 +15,7 @@ struct TransferBar: View {
         VStack(spacing: 12) {
             Spacer()
             TransferButton(systemImage: "arrowtriangle.right.fill", label: tr("Git으로 복사"),
-                           enabled: !toRepo.isEmpty && !model.isBusy && model.conflicts == nil) {
+                           enabled: !toRepo.isEmpty && model.conflicts == nil) {
                 send(model.uploadPlan(toRepo)) { model.localSelection.removeAll() }
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
@@ -24,7 +24,7 @@ struct TransferBar: View {
                   : tr("\(toRepo.count)개를 Git의 /\(model.relativeDir)(으)로 복사 (⌥⌘→)"))
 
             TransferButton(systemImage: "arrowtriangle.left.fill", label: tr("내 폴더로 복사"),
-                           enabled: !toLocal.isEmpty && !model.isBusy) {
+                           enabled: !toLocal.isEmpty) {
                 send(model.downloadPlan(toLocal)) { model.repoSelection.removeAll() }
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .option])

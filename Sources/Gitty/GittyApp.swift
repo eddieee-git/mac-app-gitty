@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `swift run`으로 실행해도 일반 앱처럼 Dock/메뉴바에 나타나도록
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.global(qos: .utility).async { AppModel.cleanOldVersionFiles() }
         AppUpdater.shared.start()
     }
 
@@ -189,6 +190,19 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 520)
+        .alert(tr("알려 드려요"), isPresented: Binding(
+            get: { model.infoMessage != nil },
+            set: { if !$0 { model.infoMessage = nil } })
+        ) {
+            Button(tr("확인")) {}
+        } message: {
+            Text(model.infoMessage ?? "")
+        }
+        // 커밋 메시지 쓰기 (설정에서 켰을 때). 창을 닫으면 취소.
+        .sheet(item: Binding(get: { model.messageRequest },
+                             set: { if $0 == nil, let r = model.messageRequest { r.reply(nil) } })) { request in
+            CommitMessageSheet(request: request)
+        }
         .alert(tr("오류"), isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } })

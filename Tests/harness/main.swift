@@ -212,6 +212,47 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         }
         Cancellation.reset()
 
+        // 저장소 크기
+        let size = await repo.size()
+        check(size.git > 0 && size.lfs == 0 && !size.nearLimit, "저장소 크기 (\(size.git) B)")
+        check(GitRepo.parseSize("1.5 GB") == 1_500_000_000 && GitRepo.parseSize("300 B") == 300, "LFS 크기 읽기")
+
+        // Git 휴지통: 지운 파일 되살리기
+        let trashSrc = work.appendingPathComponent("trash-src")
+        try fm.createDirectory(at: trashSrc, withIntermediateDirectories: true)
+        try "소중한 내용".write(to: trashSrc.appendingPathComponent("소중.txt"), atomically: true, encoding: .utf8)
+        try await repo.upload([trashSrc.appendingPathComponent("소중.txt")], to: "keep")
+        try await repo.delete(["keep/소중.txt"])
+        let deleted = await repo.deletedFiles()
+        check(deleted.contains { $0.path == "keep/소중.txt" }, "지운 파일이 휴지통에 보임")
+        if let item = deleted.first(where: { $0.path == "keep/소중.txt" }) {
+            try await repo.restoreDeleted([item])
+            check((try? String(contentsOf: clone.appendingPathComponent("keep/소중.txt"), encoding: .utf8)) == "소중한 내용", "지운 파일 되살리기")
+            let after = await repo.deletedFiles()
+            check(!after.contains { $0.path == "keep/소중.txt" }, "되살린 파일은 휴지통에서 빠짐")
+        }
+
+        // 직접 쓴 커밋 메시지
+        await repo.setNextMessage("  보고서 정리  ")
+        try await repo.createFolder("reports")
+        check(sh("git log -1 --format=%s", in: clone) == "보고서 정리", "직접 쓴 커밋 메시지")
+        try await repo.createFolder("reports2")
+        check(sh("git log -1 --format=%s", in: clone).hasPrefix("Create folder"), "메시지는 한 번만 쓰임")
+
+        // 브랜치
+        try await repo.push()
+        try await repo.switchBranch("feature/test", create: true)
+        var info = await repo.branches()
+        check(info.current == "feature/test" && info.all.contains("main"), "새 브랜치 만들기 (\(info.all))")
+        try await repo.switchBranch("main", create: false)
+        info = await repo.branches()
+        check(info.current == "main", "브랜치 바꾸기")
+        try "dirty".write(to: clone.appendingPathComponent("reports/.gitkeep"), atomically: true, encoding: .utf8)
+        do { try await repo.switchBranch("feature/test", create: false); check(false, "고친 파일이 있으면 막음") } catch {
+            check(true, "고친 파일이 있으면 막음")
+        }
+        sh("git checkout -- reports/.gitkeep", in: clone)
+
         // GitHub 주소 (주소에 든 토큰은 빼고)
         sh("git remote set-url origin https://me:ghp_secret123@github.com/owner/repo.git", in: clone)
         let web = await repo.webBase()
@@ -271,6 +312,20 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     check(GitErrors.kind(of: "error: pathspec 'x' did not match") == nil && GitErrors.friendly("이상한 오류") == "이상한 오류", "모르는 오류는 원문 그대로")
     check(GitErrors.isOffline(GittyError(message: GitErrors.friendly("Could not resolve host: github.com"))), "오프라인 알아보기")
 
+    section("파일 내용 비밀 검사")
+    let leak = work.appendingPathComponent("leak")
+    try! fm.createDirectory(at: leak, withIntermediateDirectories: true)
+    try! "aws = AKIA\("ABCDEFGHIJKLMNOP")\n".write(to: leak.appendingPathComponent("메모.txt"), atomically: true, encoding: .utf8)
+    try! "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n".write(to: leak.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+    try! "그냥 메모예요".write(to: leak.appendingPathComponent("plain.txt"), atomically: true, encoding: .utf8)
+    try! Data([0, 1, 2, 65, 75, 73, 65]).write(to: leak.appendingPathComponent("bin.dat"))
+    let leaks = UploadSafety.contentFindings(in: [leak])
+    check(leaks.count == 2 && leaks.contains { $0.hasPrefix("leak/메모.txt") } && leaks.contains { $0.hasPrefix("leak/notes.md") }, "내용 속 키 찾기 (\(leaks))")
+    let leak2 = work.appendingPathComponent("leak2")
+    try! fm.createDirectory(at: leak2, withIntermediateDirectories: true)
+    try! "TOKEN=ghp_\(String(repeating: "a", count: 36))".write(to: leak2.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
+    check(UploadSafety.findings(in: [leak2]).count == 1, "이름과 내용을 함께 보고 같은 파일은 한 번만")
+
     section("올리기 전 안전 확인")
     check(UploadSafety.isSensitive(".env") && UploadSafety.isSensitive(".env.production") && !UploadSafety.isSensitive(".env.example"), ".env 파일")
     check(UploadSafety.isSensitive("id_ed25519") && !UploadSafety.isSensitive("id_ed25519.pub"), "SSH 키 (공개 키는 괜찮음)")
@@ -300,6 +355,7 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     let plan = FolderSync.compare(from: syncA, to: syncB)
     check(plan.added == ["new.txt", "sub/deep.txt"], "새로 보낼 파일 (\(plan.added))")
     check(plan.changed == ["diff.txt"], "내용이 다른 파일 (크기가 같아도)")
+    check(!FolderSync.isDataless(syncA.appendingPathComponent("same.txt")), "내려받은 파일은 클라우드 전용 아님")
     check(plan.extra == ["old.txt"], "받는 쪽에만 있는 파일")
 
     section("검색")
@@ -311,6 +367,29 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     task.cancel()
     let cancelled = await task.value
     check(Date().timeIntervalSince(start) < 1 && cancelled.partial, "검색어가 바뀌면 바로 멈춤")
+
+    section("내 폴더 되돌리기")
+    let undoDir = work.appendingPathComponent("undo")
+    try! fm.createDirectory(at: undoDir.appendingPathComponent("to"), withIntermediateDirectories: true)
+    try! "x".write(to: undoDir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    let model = AppModel()
+    model.moveLocal([undoDir.appendingPathComponent("a.txt")], into: undoDir.appendingPathComponent("to"))
+    check(fm.fileExists(atPath: undoDir.appendingPathComponent("to/a.txt").path), "옮김")
+    await model.undoLast()
+    check(fm.fileExists(atPath: undoDir.appendingPathComponent("a.txt").path) && model.undoLabel == nil, "옮긴 것 되돌리기")
+
+    section("작업 줄 세우기")
+    // AppModel의 perform은 private이라, 저장소 없이 바로 끝나는 내려받기 두 개를 동시에 넣어 본다
+    let qDir = work.appendingPathComponent("queue")
+    try! fm.createDirectory(at: qDir.appendingPathComponent("dest"), withIntermediateDirectories: true)
+    for i in 0..<2 { try! Data(count: 1024).write(to: qDir.appendingPathComponent("q\(i).bin")) }
+    model.local.dir = qDir.appendingPathComponent("dest")
+    async let first: Void = model.copyToLocal([qDir.appendingPathComponent("q0.bin")], removeFromRepo: false)
+    async let second: Void = model.copyToLocal([qDir.appendingPathComponent("q1.bin")], removeFromRepo: false)
+    _ = await (first, second)
+    check(fm.fileExists(atPath: qDir.appendingPathComponent("dest/q0.bin").path)
+          && fm.fileExists(atPath: qDir.appendingPathComponent("dest/q1.bin").path) && !model.isBusy && model.queued == 0,
+          "바쁠 때 온 작업도 차례대로 끝남")
 
     section("폴더 지켜보기")
     let watchDir = work.appendingPathComponent("watch")
@@ -328,11 +407,11 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
     browser.dir = clone
     check(browser.loading, "화면을 막지 않고 바로 돌아옴")
     for _ in 0..<100 where browser.loading { try? await Task.sleep(for: .milliseconds(20)) }
-    check(Set(browser.items.map(\.name)) == ["docs", "memo.txt", "other"], "목록 (\(browser.items.map(\.name).sorted()))")
+    check(Set(browser.items.map(\.name)).isSuperset(of: ["docs", "memo.txt", "other"]) && !browser.items.contains { $0.name == ".DS_Store" }, "목록 (\(browser.items.map(\.name).sorted()))")
     let tree = FolderChildren()
     _ = tree.children(of: clone, includeHidden: false, alwaysHidden: [])
     try? await Task.sleep(for: .milliseconds(300))
-    check(tree.children(of: clone, includeHidden: false, alwaysHidden: [])?.map(\.lastPathComponent).sorted() == ["docs", "other"], "트리 하위 폴더")
+    check(Set(tree.children(of: clone, includeHidden: false, alwaysHidden: [])?.map(\.lastPathComponent) ?? []).isSuperset(of: ["docs", "other"]), "트리 하위 폴더")
 
     print(failures == 0 ? "\n모두 통과" : "\n\(failures)개 실패")
     exit(failures == 0 ? 0 : 1)

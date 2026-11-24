@@ -49,6 +49,20 @@ enum FolderSync {
         return (result, false)
     }
 
+    /// 아직 내려받지 않은 클라우드 파일(Google Drive·iCloud 스트리밍)인지. 읽으면 통째로 내려받게 된다.
+    static func isDataless(_ url: URL) -> Bool {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return false }
+        return st.st_flags & 0x4000_0000 != 0   // SF_DATALESS
+    }
+
+    /// 크기가 같은 두 파일이 같은지. 한쪽이 아직 안 받은 클라우드 파일이면 내용을 읽지 않는다(읽으면 통째로 내려받으므로).
+    /// 수정 시각은 믿지 않는다: 같은 순간에 쓴 다른 내용의 파일도 시각이 같을 수 있다.
+    static func probablySame(_ a: URL, _ b: URL) -> Bool {
+        if isDataless(a) || isDataless(b) { return true }
+        return sameContent(a, b)
+    }
+
     /// 두 파일 내용이 같은지 (크기가 같을 때만 부른다)
     static func sameContent(_ a: URL, _ b: URL) -> Bool {
         func digest(_ u: URL) -> Data? {
@@ -73,7 +87,7 @@ enum FolderSync {
                 if !GitRepo.isLFSPointer(to.appendingPathComponent(path)) && !GitRepo.isLFSPointer(from.appendingPathComponent(path)) {
                     plan.changed.append(path)
                 }
-            } else if !sameContent(from.appendingPathComponent(path), to.appendingPathComponent(path)) {
+            } else if !probablySame(from.appendingPathComponent(path), to.appendingPathComponent(path)) {
                 plan.changed.append(path)
             }
         }

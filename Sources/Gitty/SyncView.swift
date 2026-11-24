@@ -10,7 +10,10 @@ struct SyncSheet: View {
 
     private var secrets: [String] {
         guard direction == .toRepo, let plan else { return [] }
-        return (plan.added + plan.changed).filter { UploadSafety.isSensitive(($0 as NSString).lastPathComponent) }
+        guard let repoDir = model.currentDir else { return [] }
+        _ = repoDir
+        let files = (plan.added + plan.changed).map { model.local.dir.appendingPathComponent($0) }
+        return UploadSafety.findings(in: files)
     }
 
     var body: some View {

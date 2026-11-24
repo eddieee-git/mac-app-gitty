@@ -185,7 +185,6 @@ struct LocalPaneView: View {
                 Button(tr("휴지통으로 이동")) { trash(items) }
             }
         }
-        .disabled(model.isBusy)
         .overlay(alignment: .top) {
             if let results, !query.isEmpty {
                 searchBanner(count: results.count)
@@ -261,7 +260,10 @@ struct LocalPaneView: View {
     }
 
     private func trash(_ items: [FileItem]) {
-        do { try local.trash(items) } catch { model.errorMessage = error.localizedDescription }
+        do {
+            let moves = try local.trash(items)
+            model.recordLocalUndo(tr("\(items.count)개 항목을 휴지통으로 보냈어요"), moves: moves)
+        } catch { model.errorMessage = error.localizedDescription }
     }
 
     private func askNewFolder() {
@@ -272,7 +274,11 @@ struct LocalPaneView: View {
 
     private func askRename(_ item: FileItem) {
         nameRequest = NameRequest(title: tr("이름 변경"), confirm: tr("변경"), initial: item.name) { name in
-            do { try local.rename(item, to: name) } catch { model.errorMessage = error.localizedDescription }
+            do {
+                if let move = try local.rename(item, to: name) {
+                    model.recordLocalUndo(tr("이름을 ‘\(name)’(으)로 바꿨어요"), moves: [move])
+                }
+            } catch { model.errorMessage = error.localizedDescription }
         }
     }
 
@@ -286,7 +292,6 @@ struct LocalPaneView: View {
     // MARK: - 놓기
 
     private func accepts(_ urls: [URL], _ folder: URL?) -> Bool {
-        if model.isBusy { return false }
         // 이 패널에서 끌어 온 항목은 폴더 위에 놓을 때만 (이동)
         if DragSession.isFrom(pane: Self.paneName, urls) { return folder != nil }
         let dest = (folder ?? local.dir).standardizedFileURL.path
@@ -295,10 +300,6 @@ struct LocalPaneView: View {
 
     /// folder: 놓은 폴더 (nil이면 지금 보고 있는 폴더)
     private func receive(_ urls: [URL], folder: URL?) {
-        guard !model.isBusy else {
-            model.errorMessage = tr("다른 작업이 끝난 뒤 다시 시도하세요.")
-            return
-        }
         let dest = folder ?? local.dir
         let incoming = urls.filter {
             $0.deletingLastPathComponent().standardizedFileURL.path != dest.standardizedFileURL.path

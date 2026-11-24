@@ -16,6 +16,7 @@ AppModel (@MainActor, 화면 상태) ── GitRepo (actor, git 명령) ── S
 
 - **화면은 AppModel만 본다.** 버튼은 `AppModel`의 함수(`upload`, `delete`, `rename`, `undoLast` …)를 부르고, `AppModel`이 `GitRepo`를 부른다.
 - **git 작업은 `GitRepo` actor 안에서 하나씩 순서대로** 실행된다. 동시에 두 git 명령이 돌지 않는다.
+- **바쁠 때 온 작업은 거절하지 않고 줄을 선다** (`waitTurn`/`finishTurn`). 끝난 작업은 바쁨을 놓지 않고 다음 작업에 바로 넘겨서 끼어들기가 없다. 자동 동기화처럼 조용한 작업은 줄을 서지 않는다.
 - **`AppModel.perform`이 모든 Git 작업의 틀이다**: 바쁨 표시 → 진행률 연결 → 작업 → 결과 메시지·오류 창 → 목록 다시 읽기 → 미전송 커밋 수 갱신 → (원하면) 되돌리기 목록에 넣고 push 예약.
 
 ## Git 작업의 흐름
@@ -54,6 +55,9 @@ rebase가 충돌하면 취소하고 `merge --no-ff`로 다시 합친다. 그래�
 | `HistoryView.swift` | 변경 기록 창, Git 메뉴(되돌리기) |
 | `ConflictView.swift` | 충돌 정리 판 |
 | `QuickLook.swift` | 스페이스바 미리 보기 |
+| `RepoExtrasView.swift` | 저장소 용량 막대, Git 휴지통, 새 저장소, 커밋 메시지, 브랜치 메뉴 |
+| `GitErrors.swift` | git 오류를 쉬운 말로 (오프라인·로그인·권한 등) |
+| `Notifier.swift` | 오래 걸린 작업이 끝나면 macOS 알림 |
 | `TransferBar.swift` | 가운데 복사(▶ ◀)·폴더 맞추기 단추 |
 | `FolderSync.swift` / `SyncView.swift` | 두 폴더 비교와 맞추기 |
 | `FileStatus.swift` | Git 쪽 파일 상태 표시 |

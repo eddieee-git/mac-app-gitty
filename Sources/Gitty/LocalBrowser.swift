@@ -112,10 +112,12 @@ final class LocalBrowser {
         dir = dir.deletingLastPathComponent()
     }
 
-    func rename(_ item: FileItem, to newName: String) throws {
-        guard let name = FileOps.validateName(newName), name != item.name else { return }
+    @discardableResult
+    func rename(_ item: FileItem, to newName: String) throws -> FileMove? {
+        guard let name = FileOps.validateName(newName), name != item.name else { return nil }
         try FileOps.rename(item.url, to: name)
         reload()
+        return FileMove(from: item.url, to: item.url.deletingLastPathComponent().appendingPathComponent(name))
     }
 
     func createFolder(_ name: String) throws {
@@ -128,8 +130,9 @@ final class LocalBrowser {
         reload()
     }
 
-    func trash(_ items: [FileItem]) throws {
+    @discardableResult
+    func trash(_ items: [FileItem]) throws -> [FileMove] {
         defer { reload() }
-        try FileOps.trash(items.map(\.url))
+        return try FileOps.trash(items.map(\.url))
     }
 }

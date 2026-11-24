@@ -15,6 +15,7 @@ struct RepoPaneView: View {
     @State private var nameRequest: NameRequest?
     @State private var deleting: [FileItem] = []
     @State private var historyItem: FileItem?
+    @State private var showTrash = false
     @State private var pending: PendingTransfer?
     /// 처음 파일을 더블클릭했을 때 무엇을 할지 묻는 중인 파일들
     @State private var hintFiles: [FileItem]?
@@ -39,6 +40,8 @@ struct RepoPaneView: View {
             header
 
             HStack(spacing: 6) {
+                BranchMenu()
+                    .padding(.leading, 8)
                 Breadcrumb(rootLabel: model.repoName, rootIcon: "shippingbox.fill", components: model.path) { keep in
                     model.path = Array(model.path.prefix(keep))
                 }
@@ -85,6 +88,7 @@ struct RepoPaneView: View {
         .task(id: SearchKey(query: query, dir: model.relativeDir, revision: model.revision)) { await search() }
         .sheet(item: $nameRequest) { NameSheet(request: $0) }
         .sheet(item: $historyItem) { HistorySheet(item: $0) }
+        .sheet(isPresented: $showTrash) { TrashSheet() }
         .confirmationDialog(deleteTitle,
                             isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } })) {
             Button(tr("삭제"), role: .destructive) {
@@ -110,13 +114,14 @@ struct RepoPaneView: View {
             Button { model.path.removeLast() } label: { Label(tr("상위 폴더"), systemImage: "chevron.up") }
                 .disabled(model.path.isEmpty)
                 .help(tr("상위 폴더"))
+            Button { showTrash = true } label: { Label(tr("Git 휴지통"), systemImage: "trash") }
+                .help(tr("지운 파일 되살리기"))
             Button { askNewFolder() } label: { Label(tr("새 폴더"), systemImage: "folder.badge.plus") }
                 .help(tr("새 폴더"))
             Button(action: chooseUpload) { Label(tr("업로드"), systemImage: "square.and.arrow.up") }
                 .keyboardShortcut("o", modifiers: .command)
                 .help(tr("파일 선택해서 업로드 (⌘O)"))
         }
-        .disabled(model.isBusy)
     }
 
     private var fileTable: some View {
@@ -177,7 +182,6 @@ struct RepoPaneView: View {
                 Button(tr("삭제…"), role: .destructive) { deleting = items }
             }
         }
-        .disabled(model.isBusy)
         .overlay(alignment: .top) {
             if let results, !query.isEmpty {
                 HStack(spacing: 6) {
@@ -281,7 +285,6 @@ struct RepoPaneView: View {
     }
 
     private func accepts(_ urls: [URL], _ folder: URL?) -> Bool {
-        if model.isBusy { return false }
         // 저장소 안의 항목은 폴더 위에 놓을 때만 (git mv로 이동)
         if isInRepo(urls) { return folder != nil }
         return true
@@ -289,11 +292,6 @@ struct RepoPaneView: View {
 
     /// folder: 놓은 폴더 (nil이면 지금 보고 있는 폴더)
     private func receive(_ urls: [URL], folder: URL?) {
-        guard !model.isBusy else {
-            Log.error("upload", "다른 작업 중이라 받지 않음")
-            model.errorMessage = tr("다른 작업이 끝난 뒤 다시 시도하세요.")
-            return
-        }
         guard let root = model.root else { return }
         let destURL = folder ?? model.currentDir ?? root
         let destDir = destURL.standardizedFileURL.path == root.standardizedFileURL.path

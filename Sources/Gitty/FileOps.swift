@@ -105,6 +105,12 @@ struct FileItem: Identifiable, Hashable {
     }
 }
 
+/// 내 폴더 쪽 작업을 되돌리기 위한 기록: from에 있던 것이 to로 갔다
+struct FileMove: Equatable, Sendable {
+    let from: URL
+    let to: URL
+}
+
 enum FileOps {
     /// 항목들을 dir 안으로 복사한다. 같은 이름이 있으면 기존 것은 휴지통으로 보낸다.
     static func copy(_ urls: [URL], into dir: URL, progress: ((Int64) -> Void)? = nil) throws {
@@ -131,8 +137,10 @@ enum FileOps {
     }
 
     /// 같은 디스크 안에서 옮긴다. 같은 이름이 있으면 기존 것은 휴지통으로 보낸다.
-    static func move(_ urls: [URL], into dir: URL) throws {
+    @discardableResult
+    static func move(_ urls: [URL], into dir: URL) throws -> [FileMove] {
         let fm = FileManager.default
+        var moves: [FileMove] = []
         let dirPath = dir.standardizedFileURL.path
         for src in urls {
             let srcPath = src.standardizedFileURL.path
@@ -145,7 +153,9 @@ enum FileOps {
                 try fm.trashItem(at: dst, resultingItemURL: nil)
             }
             try fm.moveItem(at: src, to: dst)
+            moves.append(FileMove(from: src, to: dst))
         }
+        return moves
     }
 
     /// 파일·폴더 전체 크기 (폴더 안의 .git은 뺀다)
@@ -218,10 +228,16 @@ enum FileOps {
         }
     }
 
-    static func trash(_ urls: [URL]) throws {
+    /// 휴지통으로 보낸다. 돌려주는 값은 되돌리기용 (원래 자리 → 휴지통 안 자리).
+    @discardableResult
+    static func trash(_ urls: [URL]) throws -> [FileMove] {
+        var moves: [FileMove] = []
         for url in urls {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            var result: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &result)
+            if let result { moves.append(FileMove(from: url, to: result as URL)) }
         }
+        return moves
     }
 
     /// 대소문자만 바뀌는 이름 변경도 처리한다 (APFS는 기본적으로 대소문자 구분 안 함).

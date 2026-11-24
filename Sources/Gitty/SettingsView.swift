@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(Log.fileLoggingKey) private var fileLogging = true
     @AppStorage(Loc.languageKey) private var language = "system"
     @AppStorage(DoubleClickAction.key) private var doubleClick = ""
+    @AppStorage(AppModel.askMessageKey) private var askMessage = false
     @AppStorage(GitRepo.lfsOnDemandKey) private var lfsOnDemand = false
     @State private var lfsVersion: String?
     @State private var checkedLFS = false
@@ -71,6 +72,13 @@ struct SettingsView: View {
             }
 
             AppUpdaterSection(updater: .shared)
+
+            Section(tr("커밋")) {
+                Toggle(tr("올리기 전에 커밋 메시지 쓰기"), isOn: $askMessage)
+                Text(tr("끄면 \"Upload 파일 이름\"처럼 자동으로 써요. 팀 저장소라면 켜 두는 게 좋아요."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section(tr("기록")) {
                 Toggle(tr("작업 기록을 파일로 남기기"), isOn: $fileLogging)

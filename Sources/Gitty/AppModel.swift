@@ -47,6 +47,28 @@ final class AppModel {
 
     var isBusy: Bool { busyMessage != nil }
 
+    /// 지금 작업이 끝나길 기다리는 작업 수 (바쁠 때 거절하지 않고 줄을 세운다)
+    private(set) var queued = 0
+    @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    /// 다른 작업 중이면 차례가 올 때까지 기다린다. 돌아오면 "바쁨"이 이미 이 작업 몫으로 잡혀 있다.
+    private func waitTurn() async {
+        guard isBusy else { return }
+        queued += 1
+        await withCheckedContinuation { waiters.append($0) }
+        queued -= 1
+    }
+
+    /// 작업이 끝났을 때: 기다리는 작업이 있으면 바쁨을 놓지 않고 바로 넘겨준다 (그사이 다른 것이 끼어들지 않게)
+    private func finishTurn() {
+        if waiters.isEmpty {
+            busyMessage = nil
+        } else {
+            busyMessage = tr("다음 작업 준비 중…")
+            waiters.removeFirst().resume()
+        }
+    }
+
     /// 커밋은 했고 곧 push할 예정 (연달아 한 작업을 모아 한 번에 올린다)
     private(set) var pushPending = false
     @ObservationIgnored private var pushTask: Task<Void, Never>?
@@ -55,13 +77,33 @@ final class AppModel {
 
     /// 되돌릴 수 있는 Git 작업 (이번에 연 저장소에서 Gitty가 한 것, 최근 것이 끝)
     struct UndoEntry: Equatable {
-        let commit: CommitRef
+        /// Git 작업이면 되돌릴 커밋, 내 폴더 작업이면 nil
+        var commit: CommitRef?
+        /// 내 폴더 작업: 되돌릴 때 to → from으로 옮긴다
+        var moves: [FileMove] = []
         let label: String
     }
     private(set) var undoStack: [UndoEntry] = []
 
     /// 양쪽 패널에서 고른 항목 (가운데 복사 버튼이 쓴다)
     var localSelection = Set<URL>()
+    /// 저장소 크기 (상태 표시줄)
+    private(set) var repoSize: RepoSize?
+    @ObservationIgnored private var sizeWarned = false
+    /// 알려 드릴 것 (오류가 아닌 안내 창)
+    var infoMessage: String?
+    /// 지금 브랜치와 고를 수 있는 브랜치들
+    private(set) var branch = ""
+    private(set) var branches: [String] = []
+    /// 커밋 메시지를 직접 쓸 때 화면에 띄우는 요청
+    struct MessageRequest: Identifiable {
+        let id = UUID()
+        let summary: String
+        let suggestion: String
+        let reply: (String?) -> Void
+    }
+    var messageRequest: MessageRequest?
+    static let askMessageKey = "askCommitMessage"
     /// Git 쪽 파일 상태 (고침·새 파일·올리기 전·안 받음)
     private(set) var repoStatus = RepoStatus()
     /// GitHub 웹 주소와 브랜치 (링크용)
@@ -120,6 +162,10 @@ final class AppModel {
         undoStack = []
         conflicts = nil
         repoIsPublic = nil
+        repoSize = nil
+        sizeWarned = false
+        branch = ""
+        branches = []
         publicWarned = false
         repoName = await repo.displayName()
         Task { await checkVisibility(of: url) }
@@ -143,6 +189,24 @@ final class AppModel {
             await repo.prepareLFS()
         }
         if ok { lastSynced = Date() }
+        Task { await checkGitHubLogin() }
+        Task { await refreshSize(); await loadBranches() }
+    }
+
+    /// 저장소를 열 때 gh 로그인이 살아 있는지 미리 본다. push가 실패하고 나서야 알게 되지 않게.
+    private func checkGitHubLogin() async {
+        guard let gh = Shell.ghPath else {
+            errorMessage = tr("GitHub CLI(gh)가 없어서 GitHub에 올릴 수 없어요. 터미널에서 brew install gh 후 gh auth login 을 실행해 주세요.")
+            return
+        }
+        let r = await Shell.run(gh, ["auth", "status", "--hostname", "github.com"])
+        guard r.status != 0 else { return }
+        let text = (r.stdout + r.stderr).lowercased()
+        // 오프라인이라 확인을 못 한 것은 알리지 않는다
+        if text.contains("not logged") || text.contains("invalid") || text.contains("expired") {
+            Log.error("repo", "gh 로그인 확인 실패\n\(r.errorText)")
+            errorMessage = tr("GitHub 로그인이 풀렸어요. 터미널에서 gh auth login 을 실행한 뒤 다시 시도해 주세요.")
+        }
     }
 
     /// 상태 표시줄의 취소 단추
@@ -153,13 +217,16 @@ final class AppModel {
     }
 
     func clone(_ spec: String) async {
+        await waitTurn()
         busyMessage = tr("클론하는 중…")
         Cancellation.reset()
         let reporter = startProgress()
-        defer { busyMessage = nil; endProgress() }
+        var released = false
+        defer { if !released { finishTurn() }; endProgress() }
         do {
             let url = try await GitRepo.clone(spec, into: Self.reposDirectory, reporter: reporter)
-            busyMessage = nil
+            released = true
+            finishTurn()
             endProgress()
             await open(url)
         } catch {
@@ -266,6 +333,7 @@ final class AppModel {
         }
         guard ok else { return }
         lastSynced = Date()
+        if let root { await checkVisibility(of: root) }   // 그사이 공개로 바뀌었는지
         let after = await repo.headHash()
         if let before, let after, before != after {
             let count = await repo.commitCount(from: before, to: after)
@@ -312,7 +380,8 @@ final class AppModel {
     /// 내 폴더 안에서 다른 폴더로 옮기기
     func moveLocal(_ urls: [URL], into folder: URL) {
         do {
-            try FileOps.move(urls, into: folder)
+            let moves = try FileOps.move(urls, into: folder)
+            recordLocalUndo(tr("\(urls.count)개 항목을 \(folder.lastPathComponent)(으)로 옮겼어요"), moves: moves)
             Log.info("move", "내 폴더 안에서 \(folder.path)(으)로 옮김: \(urls.map(\.lastPathComponent).joined(separator: ", "))")
             statusMessage = tr("\(urls.count)개 항목을 \(folder.lastPathComponent)(으)로 옮겼어요")
         } catch {
@@ -375,7 +444,8 @@ final class AppModel {
 
     /// 항목들을 왼쪽 "내 폴더"로 복사. removeFromRepo면 저장소에서 삭제(커밋·push)까지 해서 이동이 된다.
     func copyToLocal(_ urls: [URL], removeFromRepo: Bool, into folder: URL? = nil) async {
-        guard !urls.isEmpty, !isBusy else { return }
+        guard !urls.isEmpty else { return }
+        await waitTurn()
         Log.info("download", "내 폴더(\((folder ?? local.dir).path))로 \(removeFromRepo ? "이동" : "복사")\n" + urls.map(\.path).joined(separator: "\n"))
         let dest = folder ?? local.dir
         // Google Drive처럼 온라인 전용 파일은 받는 데 오래 걸릴 수 있어 화면이 멈추지 않게 백그라운드에서 복사
@@ -389,19 +459,19 @@ final class AppModel {
                 try FileOps.copy(urls, into: dest, progress: { reporter.advance($0) })
             }.value
         } catch is CancellationError {
-            busyMessage = nil
+            finishTurn()
             statusMessage = tr("취소했어요")
             Log.info("download", "내려받기 취소")
             local.reload()
             return
         } catch {
-            busyMessage = nil
+            finishTurn()
             Log.error("download", error.localizedDescription)
             errorMessage = error.localizedDescription
             local.reload()
             return
         }
-        busyMessage = nil
+        finishTurn()
         endProgress()
         local.reload()
         Log.info("download", "복사 완료: \(urls.map(\.lastPathComponent).joined(separator: ", "))")
@@ -420,11 +490,46 @@ final class AppModel {
 
     /// 마지막 Git 작업을 되돌린다 (되돌리는 커밋을 새로 만든다)
     func undoLast() async {
-        guard let entry = undoStack.last, let repo else { return }
+        guard let entry = undoStack.last else { return }
+        guard let commit = entry.commit else {
+            undoLocal(entry)
+            return
+        }
+        guard let repo else { return }
         let ok = await perform(tr("되돌리는 중…"), done: tr("되돌렸어요: \(entry.label)"), pushAfter: true) {
-            try await repo.revert(entry.commit)
+            try await repo.revert(commit)
         }
         if ok { undoStack.removeLast() }
+    }
+
+    /// 내 폴더 쪽 작업(휴지통, 옮기기, 이름 바꾸기)을 기록해 둔다
+    func recordLocalUndo(_ label: String, moves: [FileMove]) {
+        guard !moves.isEmpty else { return }
+        undoStack.append(UndoEntry(commit: nil, moves: moves, label: label))
+        if undoStack.count > 50 { undoStack.removeFirst() }
+    }
+
+    /// 옮긴 것을 원래 자리로 (나중에 한 것부터)
+    private func undoLocal(_ entry: UndoEntry) {
+        let fm = FileManager.default
+        do {
+            for move in entry.moves.reversed() {
+                if fm.fileExists(atPath: move.from.path) {
+                    throw GittyError(message: tr("원래 자리에 같은 이름이 이미 있어서 되돌릴 수 없어요: \(move.from.lastPathComponent)"))
+                }
+                guard fm.fileExists(atPath: move.to.path) else {
+                    throw GittyError(message: tr("되돌릴 항목을 찾을 수 없어요 (휴지통을 비웠을 수 있어요): \(move.to.lastPathComponent)"))
+                }
+                try fm.createDirectory(at: move.from.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.moveItem(at: move.to, to: move.from)
+            }
+            undoStack.removeLast()
+            statusMessage = tr("되돌렸어요: \(entry.label)")
+            Log.info("local", "되돌림: \(entry.label)")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        local.reload()
     }
 
     func history(of item: FileItem) async -> [FileVersion] {
@@ -434,6 +539,20 @@ final class AppModel {
         } catch {
             errorMessage = error.localizedDescription
             return []
+        }
+    }
+
+    /// "이 버전 열기"로 꺼낸 임시 파일 중 하루가 지난 것을 지운다 (앱을 켤 때)
+    nonisolated static func cleanOldVersionFiles() {
+        let fm = FileManager.default
+        let names = Set(["Gitty 지난 버전", "Gitty past versions", tr("Gitty 지난 버전/{}").components(separatedBy: "/").first ?? ""]) // no-tr
+        for name in names where !name.isEmpty {
+            let dir = fm.temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+            let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            for item in items {
+                let date = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                if Date().timeIntervalSince(date) > 24 * 3600 { try? fm.removeItem(at: item) }
+            }
         }
     }
 
@@ -525,8 +644,15 @@ final class AppModel {
         guard let gh = Shell.ghPath, repoName.contains("/") else { return }
         let r = await Shell.run(gh, ["repo", "view", repoName, "--json", "visibility", "-q", ".visibility"], cwd: url)
         guard root == url, r.status == 0 else { return }
-        repoIsPublic = r.stdout.trimmed.uppercased() == "PUBLIC"
-        Log.info("repo", "\(repoName): \(repoIsPublic == true ? "공개" : "비공개") 저장소")
+        let isPublic = r.stdout.trimmed.uppercased() == "PUBLIC"
+        if repoIsPublic == false && isPublic {
+            // 비공개였다가 공개로 바뀌었으면 다음 업로드 때 다시 확인한다
+            publicWarned = false
+            statusMessage = tr("‘\(repoName)’이(가) 공개 저장소로 바뀌었어요. 올릴 때 다시 확인해요.")
+            Log.info("repo", "\(repoName): 비공개 → 공개로 바뀜")
+        }
+        if repoIsPublic != isPublic { Log.info("repo", "\(repoName): \(isPublic ? "공개" : "비공개") 저장소") }
+        repoIsPublic = isPublic
     }
 
     /// "큰 파일 필요할 때 받기"일 때: 열거나 복사하기 전에 그 파일들의 실제 내용을 받는다
@@ -544,6 +670,83 @@ final class AppModel {
         guard !files.isEmpty else { return true }
         return await perform(tr("큰 파일 받는 중…"), done: tr("큰 파일 \(files.count)개를 받았어요")) {
             try await repo.materialize(files)
+        }
+    }
+
+    // MARK: - 크기 · 휴지통 · 브랜치 · 메시지 · 새 저장소
+
+    func refreshSize() async {
+        guard let repo else { return }
+        let size = await repo.size()
+        guard root != nil else { return }
+        repoSize = size
+        if size.nearLimit && !sizeWarned {
+            sizeWarned = true
+            Log.info("repo", "저장소 크기 경고: git \(size.git) B, LFS \(size.lfs) B")
+            infoMessage = tr("저장소가 GitHub 권장 크기에 가까워졌어요. 저장소 \(Self.bytes(size.git)) / 1 GB, LFS \(Self.bytes(size.lfs)) / 1 GB.\n\nGit은 지운 파일도 기록에 남겨서 지워도 크기가 줄지 않아요. 큰 파일이 많다면 새 저장소로 나누는 걸 생각해 보세요.")
+        }
+    }
+
+    nonisolated static func bytes(_ n: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+    }
+
+    func deletedFiles() async -> [DeletedFile] {
+        await repo?.deletedFiles() ?? []
+    }
+
+    func restoreDeleted(_ files: [DeletedFile]) async {
+        guard let repo, !files.isEmpty else { return }
+        await perform(tr("되살리는 중…"), done: tr("\(files.count)개 파일을 되살렸어요"), undoable: true) {
+            try await repo.restoreDeleted(files)
+        }
+    }
+
+    func loadBranches() async {
+        guard let repo else { return }
+        let info = await repo.branches()
+        guard root != nil else { return }
+        branch = info.current
+        branches = info.all
+    }
+
+    /// 브랜치를 바꾼다 (create면 새로 만든다). 올리지 않은 커밋은 먼저 올린다.
+    func switchBranch(_ name: String, create: Bool) async {
+        guard let repo, name != branch || create else { return }
+        if pushPending { await flushPush() }
+        let ok = await perform(create ? tr("‘\(name)’ 브랜치 만드는 중…") : tr("‘\(name)’ 브랜치로 바꾸는 중…"),
+                               done: create ? tr("‘\(name)’ 브랜치를 만들었어요") : tr("‘\(name)’ 브랜치로 바꿨어요")) {
+            try await repo.switchBranch(name, create: create)
+        }
+        if ok {
+            undoStack = []
+            path = []
+            if create { schedulePush() }   // 새 브랜치를 GitHub에도 만든다
+        }
+        await loadBranches()
+    }
+
+    /// 커밋 메시지 창을 띄우고 답을 기다린다 (nil = 취소)
+    private func askMessage(summary: String, suggestion: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            messageRequest = MessageRequest(summary: summary, suggestion: suggestion) { [weak self] answer in
+                self?.messageRequest = nil
+                continuation.resume(returning: answer)
+            }
+        }
+    }
+
+    /// GitHub에 새 저장소를 만들고 바로 연다
+    func createRepository(name: String, isPrivate: Bool) async {
+        await waitTurn()
+        busyMessage = tr("‘\(name)’ 저장소 만드는 중…")
+        do {
+            let spec = try await GitRepo.createRepo(name: name, isPrivate: isPrivate)
+            finishTurn()
+            await clone(spec)
+        } catch {
+            finishTurn()
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -646,12 +849,12 @@ final class AppModel {
     /// 왼쪽(내 폴더) → Git 폴더로 복사. toDir: 저장소 안의 폴더 (nil이면 지금 보고 있는 폴더)
     /// 같은 이름, 비밀 정보일 수 있는 파일, 공개 저장소면 먼저 묻는다.
     func uploadPlan(_ urls: [URL], removeLocalAfter: Bool = false, toDir: String? = nil) -> TransferPlan? {
-        guard !urls.isEmpty, !isBusy, let root else { return nil }
+        guard !urls.isEmpty, let root else { return nil }
         let dir = toDir ?? relativeDir
         let destURL = dir.isEmpty ? root : root.appendingPathComponent(dir, isDirectory: true)
         let names = existingNames(in: destURL)
         let conflicts = urls.map(\.lastPathComponent).filter(names.contains)
-        let secrets = UploadSafety.sensitiveFiles(in: urls)
+        let secrets = UploadSafety.findings(in: urls)
         let askPublic = repoIsPublic == true && !publicWarned
         let run = {
             if askPublic { self.publicWarned = true }
@@ -662,6 +865,7 @@ final class AppModel {
             Log.info("upload", "비밀 정보일 수 있는 파일이 있어 묻는 중: \(secrets.joined(separator: ", "))")
             let list = secrets.prefix(10).joined(separator: "\n") + (secrets.count > 10 ? tr("\n외 \(secrets.count - 10)개") : "")
             var note = tr("Git에 올라간 파일은 나중에 지워도 기록에 남아요. 비밀번호·키가 들어 있으면 올리지 마세요.")
+                + "\n" + tr("이미 올린 적이 있다면 그 키는 폐기하고 새로 만드세요. 지우기만으로는 기록에서 사라지지 않아요.")
             if !publicLine.isEmpty { note += "\n" + publicLine }
             if !conflicts.isEmpty { note += tr("\n같은 이름이 있는 \(conflicts.count)개는 덮어써요.") }
             return TransferPlan(title: tr("비밀 정보가 들어 있을 수 있는 파일이 있어요"), conflicts: [list], note: note,
@@ -677,7 +881,7 @@ final class AppModel {
 
     /// 오른쪽(Git) → 지금 보고 있는 내 폴더로 복사
     func downloadPlan(_ urls: [URL], removeFromRepo: Bool = false) -> TransferPlan? {
-        guard !urls.isEmpty, !isBusy else { return nil }
+        guard !urls.isEmpty else { return nil }
         let names = existingNames(in: local.dir)
         return TransferPlan(title: tr("내 폴더의 같은 이름 항목을 덮어쓸까요?"),
                             conflicts: urls.map(\.lastPathComponent).filter(names.contains),
@@ -715,15 +919,29 @@ final class AppModel {
     private func perform(_ label: String, done: String, quiet: Bool = false, pushAfter: Bool = false,
                          undoable: Bool = false, allowDuringConflict: Bool = false,
                          _ op: @escaping () async throws -> Void) async -> Bool {
-        guard !isBusy else {
-            if !quiet { Log.error("작업", "다른 작업 중이라 건너뜀: \(label)") }
-            return false
+        // 설정에서 켰으면 커밋을 만드는 작업 전에 메시지를 받는다 (취소하면 하지 않는다)
+        if undoable && !quiet && UserDefaults.standard.bool(forKey: Self.askMessageKey) {
+            guard let message = await askMessage(summary: label, suggestion: done) else {
+                statusMessage = tr("취소했어요")
+                return false
+            }
+            await repo?.setNextMessage(message)
+        }
+        var waited = false
+        if isBusy {
+            // 자동 동기화처럼 조용한 작업은 기다리지 않고 다음 차례로 넘긴다
+            if quiet { return false }
+            Log.info("작업", "다른 작업이 끝나길 기다림: \(label)")
+            await waitTurn()
+            waited = true
         }
         if conflicts != nil && !allowDuringConflict {
             if !quiet { errorMessage = tr("먼저 원격과 충돌한 파일을 정리해 주세요.") }
+            if waited { finishTurn() }   // 넘겨받은 차례를 다음 작업에 돌려준다
             return false
         }
         busyMessage = label
+        let started = Date()
         Cancellation.reset()
         if !quiet { errorMessage = nil }
         let reporter = startProgress()
@@ -762,12 +980,18 @@ final class AppModel {
         endProgress()
         reload()
         unpushed = await repo?.unpushedCount() ?? 0
+        if !quiet && ok { Task { await refreshSize() } }
         await refreshStatus()
         if ok && undoable, let commit = await repo?.takeLastCommit() {
             undoStack.append(UndoEntry(commit: commit, label: done))
             if undoStack.count > 50 { undoStack.removeFirst() }
         }
-        busyMessage = nil
+        finishTurn()
+        if !quiet {
+            Notifier.taskFinished(ok ? tr("Gitty · 끝났어요") : tr("Gitty · 실패했어요"),
+                                  body: ok ? (done.isEmpty ? label : done) : (errorMessage ?? statusMessage),
+                                  seconds: Date().timeIntervalSince(started))
+        }
         if ok && (pushAfter || undoable) { schedulePush() }
         return ok
     }

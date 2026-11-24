@@ -101,13 +101,13 @@ extension FocusedValues {
     }
 }
 
-/// 편집 메뉴의 "Git 작업 되돌리기"
+/// 편집 메뉴의 "작업 되돌리기" (Git 작업과 내 폴더 작업)
 struct GitCommands: Commands {
     @FocusedValue(\.appModel) private var model
 
     var body: some Commands {
         CommandGroup(after: .undoRedo) {
-            Button(model?.undoLabel.map { tr("Git 작업 되돌리기: \($0)") } ?? tr("Git 작업 되돌리기")) {
+            Button(model?.undoLabel.map { tr("작업 되돌리기: \($0)") } ?? tr("작업 되돌리기")) {
                 Task { await model?.undoLast() }
             }
             .keyboardShortcut("z", modifiers: [.command, .option])

@@ -4,6 +4,7 @@ import AppKit
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
     @State private var showClone = false
+    @State private var showNewRepo = false
     @State private var selectedRecent: URL?
     @State private var opening: URL?
     @State private var setup: SetupStatus?
@@ -41,6 +42,13 @@ struct WelcomeView: View {
                 }
                 .controlSize(.large)
             }
+            Button {
+                showNewRepo = true
+            } label: {
+                Label(tr("새 저장소 만들기…"), systemImage: "plus.rectangle.on.folder")
+            }
+            .buttonStyle(.link)
+            .sheet(isPresented: $showNewRepo) { NewRepoSheet() }
             .disabled(model.isBusy)
 
             if !model.recents.isEmpty {

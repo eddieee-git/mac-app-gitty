@@ -40,8 +40,32 @@ struct MergeConflictError: LocalizedError {
     var errorDescription: String? { tr("원격 변경과 충돌한 파일이 \(files.count)개 있어요.") }
 }
 
+/// 저장소 크기 (GitHub 권장: 저장소 1GB 이하, 무료 LFS 1GB)
+struct RepoSize: Equatable, Sendable {
+    var git: Int64 = 0
+    var lfs: Int64 = 0
+    static let gitLimit: Int64 = 1_000_000_000
+    static let lfsLimit: Int64 = 1_000_000_000
+    var gitRatio: Double { Double(git) / Double(Self.gitLimit) }
+    var lfsRatio: Double { Double(lfs) / Double(Self.lfsLimit) }
+    var nearLimit: Bool { gitRatio >= 0.8 || lfsRatio >= 0.8 }
+}
+
+/// Git 휴지통: 기록에는 남아 있지만 지금은 없는 파일
+struct DeletedFile: Identifiable, Sendable, Hashable {
+    let path: String
+    /// 지운 커밋 (되살릴 내용은 그 바로 앞 커밋에 있다)
+    let commit: String
+    let date: Date
+    var id: String { commit + ":" + path }
+    var name: String { (path as NSString).lastPathComponent }
+    var folder: String { let d = (path as NSString).deletingLastPathComponent; return d.isEmpty ? "/" : "/" + d }
+}
+
 actor GitRepo {
     let root: URL
+    /// 다음 커밋에 쓸 메시지 (사용자가 직접 썼을 때). 한 번 쓰면 지운다.
+    private var nextMessage: String?
     /// 마지막으로 commit()이 만든 커밋. AppModel이 가져가서 되돌리기 목록에 넣는다.
     private var lastCommit: CommitRef?
     private var identity: (name: String, email: String)?
@@ -351,6 +375,135 @@ actor GitRepo {
         return (clean, branch)
     }
 
+    // MARK: - 크기 · 휴지통 · 메시지 · 브랜치
+
+    func setNextMessage(_ message: String?) { nextMessage = message }
+
+    /// 저장소 크기: git 객체(기록 포함)와 LFS 파일(모든 버전, 중복 제외)
+    func size() async -> RepoSize {
+        var s = RepoSize()
+        let objects = await result(["count-objects", "-v"], probe: true).stdout
+        for line in objects.split(separator: "\n") {
+            let parts = line.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2, parts[0] == "size" || parts[0] == "size-pack", let kib = Int64(parts[1]) { s.git += kib * 1024 }
+        }
+        if await lfsAvailable() {
+            let lfs = await result(["lfs", "ls-files", "--all", "--long", "--size"], probe: true).stdout
+            var seen = Set<String>()
+            for line in lfs.split(separator: "\n") {
+                let oid = line.split(separator: " ").first.map(String.init) ?? ""
+                guard seen.insert(oid).inserted, let open = line.lastIndex(of: "("), let close = line.lastIndex(of: ")") else { continue }
+                s.lfs += Self.parseSize(String(line[line.index(after: open)..<close]))
+            }
+        }
+        return s
+    }
+
+    /// "12 MB", "1.5 GB", "300 B" → 바이트
+    nonisolated static func parseSize(_ text: String) -> Int64 {
+        let parts = text.split(separator: " ")
+        guard parts.count == 2, let n = Double(parts[0]) else { return 0 }
+        let unit: Double
+        switch parts[1].uppercased() {
+        case "B": unit = 1
+        case "KB": unit = 1e3
+        case "MB": unit = 1e6
+        case "GB": unit = 1e9
+        case "TB": unit = 1e12
+        default: unit = 1
+        }
+        return Int64(n * unit)
+    }
+
+    /// 최근 지운 파일 (지금 없는 것만, 같은 경로는 가장 최근 것만)
+    func deletedFiles(limit: Int = 300) async -> [DeletedFile] {
+        let out = await result(["log", "--diff-filter=D", "--name-only", "-z", "-n", "\(limit)",
+                                "--format=%x1e%H%x1f%at"], probe: true).stdout
+        var files: [DeletedFile] = []
+        var seen = Set<String>()
+        for record in out.split(separator: "\u{1e}") {
+            let fields = record.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+            guard let head = fields.first else { continue }
+            let meta = head.split(separator: "\u{1f}").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard meta.count == 2 else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(meta[1]) ?? 0)
+            for path in fields.dropFirst().map({ $0.trimmingCharacters(in: .newlines) }) where !path.isEmpty {
+                guard seen.insert(path).inserted, !FileManager.default.fileExists(atPath: url(for: path).path) else { continue }
+                if AppModel.repoHidden.contains((path as NSString).lastPathComponent) { continue }
+                files.append(DeletedFile(path: path, commit: meta[0], date: date))
+            }
+        }
+        return files
+    }
+
+    /// 지운 파일을 원래 자리에 되살리고 커밋한다
+    func restoreDeleted(_ files: [DeletedFile]) async throws {
+        var touched: [String] = []
+        do {
+            for file in files {
+                let dest = url(for: file.path)
+                try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let r = await result(["cat-file", "--filters", "\(file.commit)^:\(file.path)"], stdoutTo: dest)
+                guard r.status == 0 else {
+                    try? FileManager.default.removeItem(at: dest)
+                    throw GittyError(message: tr("\(file.name)을(를) 되살리지 못했어요.\n\(GitErrors.friendly(r.errorText))"))
+                }
+                touched.append(file.path)
+            }
+        } catch {
+            await rollback(touched)
+            throw error
+        }
+        try await commitOrRollback("Restore \(summary(files.map(\.path), in: ""))", paths: touched)
+    }
+
+    /// 지금 브랜치와 고를 수 있는 브랜치들 (로컬 + 원격, 이름만)
+    func branches() async -> (current: String, all: [String]) {
+        let current = (try? await currentBranch()) ?? ""
+        _ = await result(["fetch", "--prune", "-q", "origin"], probe: true)
+        let out = await result(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"], probe: true).stdout
+        var names = Set<String>()
+        for ref in out.split(separator: "\n").map(String.init) {
+            if ref.hasPrefix("refs/heads/") { names.insert(String(ref.dropFirst("refs/heads/".count))) }
+            if ref.hasPrefix("refs/remotes/origin/") {
+                let n = String(ref.dropFirst("refs/remotes/origin/".count))
+                if n != "HEAD" { names.insert(n) }
+            }
+        }
+        if !current.isEmpty { names.insert(current) }
+        return (current, names.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
+    }
+
+    /// 브랜치를 바꾼다. create면 지금 위치에서 새로 만든다. 원격에만 있으면 따라가는 로컬 브랜치를 만든다.
+    func switchBranch(_ name: String, create: Bool) async throws {
+        let dirty = await result(["status", "--porcelain", "--untracked-files=no"], probe: true).stdout.trimmed
+        guard dirty.isEmpty else {
+            throw GittyError(message: tr("저장소 폴더에서 고친 파일이 있어서 브랜치를 바꿀 수 없어요. 먼저 올리거나 되돌려 주세요."))
+        }
+        if create {
+            try await git(["switch", "-c", name])
+        } else {
+            let local = await result(["rev-parse", "--verify", "-q", "refs/heads/\(name)"], probe: true).status == 0
+            try await git(local ? ["switch", name] : ["switch", "-c", name, "--track", "origin/\(name)"])
+        }
+        Log.info("repo", "브랜치 바꿈: \(name)\(create ? " (새로 만듦)" : "")")
+        await prepareLFS()
+    }
+
+    /// GitHub에 새 저장소를 만든다 (README 하나를 넣어 바로 클론할 수 있게). 돌려주는 값: owner/name
+    static func createRepo(name: String, isPrivate: Bool) async throws -> String {
+        guard let gh = Shell.ghPath else { throw GittyError(message: tr("GitHub CLI(gh)가 필요해요. 터미널에서 brew install gh 후 gh auth login 을 실행해 주세요.")) }
+        let r = await Shell.run(gh, ["repo", "create", name, isPrivate ? "--private" : "--public", "--add-readme"])
+        guard r.status == 0 else {
+            Log.error("repo", "저장소 만들기 실패\n\(r.errorText)")
+            throw GittyError(message: GitErrors.friendly(r.errorText))
+        }
+        let url = r.stdout.trimmed   // https://github.com/owner/name
+        let parts = url.split(separator: "/").suffix(2)
+        Log.info("repo", "새 저장소 만듦: \(url) (\(isPrivate ? "비공개" : "공개"))")
+        return parts.count == 2 ? parts.joined(separator: "/") : name
+    }
+
     private func currentBranch() async throws -> String {
         try await git(["symbolic-ref", "--short", "HEAD"]).trimmed
     }
@@ -513,7 +666,9 @@ actor GitRepo {
             Log.info("commit", "바뀐 내용이 없어 커밋하지 않음: \(message)")
             return
         }
-        try await git(["commit", "-q", "-m", message])
+        let finalMessage = nextMessage.map { $0.trimmed }.flatMap { $0.isEmpty ? nil : $0 } ?? message
+        nextMessage = nil
+        try await git(["commit", "-q", "-m", finalMessage])
         let hash = (try? await git(["rev-parse", "--short", "HEAD"]))?.trimmed ?? "?"
         Log.info("commit", "\(hash) \(message)")
         if let full = try? await git(["rev-parse", "HEAD"]).trimmed {

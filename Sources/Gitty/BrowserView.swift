@@ -90,6 +90,10 @@ struct BrowserView: View {
                     ProgressView().controlSize(.small)
                     Text(model.progress?.phase ?? busy)
                 }
+                if model.queued > 0 {
+                    Text(tr("· 대기 \(model.queued)개")).foregroundStyle(.secondary)
+                        .help(tr("지금 작업이 끝나면 차례대로 해요"))
+                }
                 Button(tr("취소")) { model.cancelCurrent() }
                     .controlSize(.small)
                     .disabled(busy == tr("취소하는 중…"))
@@ -105,6 +109,9 @@ struct BrowserView: View {
                 }
             }
             Spacer()
+            if let size = model.repoSize, !model.isBusy {
+                RepoSizeMeter(size: size)
+            }
             if let synced = model.lastSynced, !model.isBusy {
                 Text(tr("동기화 \(synced.formatted(date: .omitted, time: .shortened))") + (autoSyncMinutes > 0 ? tr(" · \(autoSyncMinutes)분마다") : ""))
                     .foregroundStyle(.secondary)
@@ -119,7 +126,7 @@ struct BrowserView: View {
             if let undo = model.undoLabel, !model.isBusy {
                 Button(tr("되돌리기")) { Task { await model.undoLast() } }
                     .controlSize(.small)
-                    .help(tr("마지막 Git 작업 되돌리기: \(undo) (⌥⌘Z)"))
+                    .help(tr("마지막 작업 되돌리기: \(undo) (⌥⌘Z)"))
             }
             if model.unpushed > 0 && !model.isBusy && !model.pushPending {
                 Text(tr("push 안 된 커밋 \(model.unpushed)개")).foregroundStyle(.orange)
