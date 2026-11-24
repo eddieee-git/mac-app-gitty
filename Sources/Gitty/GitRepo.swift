@@ -324,7 +324,7 @@ actor GitRepo {
             await rollback(touched)
             throw error
         }
-        try await commit(tr("Sync \(dir.isEmpty ? "/" : "/" + dir) (\(files.count)개 올림\(deletes.isEmpty ? "" : tr(", \(deletes.count)개 지움")))"),
+        try await commitOrRollback(tr("Sync \(dir.isEmpty ? "/" : "/" + dir) (\(files.count)개 올림\(deletes.isEmpty ? "" : tr(", \(deletes.count)개 지움")))"),
                          paths: touched)
     }
 
@@ -636,7 +636,7 @@ actor GitRepo {
             await rollback(touched)
             throw error
         }
-        try await commit("Upload \(summary(names, in: dir))", paths: touched)
+        try await commitOrRollback("Upload \(summary(names, in: dir))", paths: touched)
     }
 
     func delete(_ paths: [String]) async throws {
@@ -710,10 +710,28 @@ actor GitRepo {
                 _ = await result(["--literal-pathspecs", "checkout", "HEAD", "--", path], probe: true)
                 _ = await result(["--literal-pathspecs", "clean", "-fdq", "--", path], probe: true)
             } else {
+                // git add까지 됐을 수 있으니 올려 둔 것도 내린 뒤 지운다
+                _ = await result(["--literal-pathspecs", "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", path], probe: true)
                 try? FileManager.default.removeItem(at: url(for: path))
             }
         }
         Log.info("upload", "멈춘 업로드를 되돌림: \(paths.joined(separator: ", "))")
+    }
+
+    /// 커밋한다. 커밋이 끝나기 전에 취소되거나 실패하면(예: git add 중에 취소) 복사한 것을 되돌린다.
+    /// 커밋이 이미 만들어졌으면 되돌리지 않는다 (그건 되돌리기 ⌥⌘Z로).
+    private func commitOrRollback(_ message: String, paths: [String]) async throws {
+        let before = await headHash()
+        do {
+            try await commit(message, paths: paths)
+        } catch {
+            let wasCancelled = Cancellation.isRequested
+            Cancellation.reset()
+            let after = await headHash()
+            if wasCancelled { Cancellation.request() }
+            if after == before { await rollback(paths) }
+            throw error
+        }
     }
 
     // MARK: - 헬퍼

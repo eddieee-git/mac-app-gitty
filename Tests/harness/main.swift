@@ -180,10 +180,13 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         // 취소: 파일 여러 개를 올리다 멈추면 원래대로
         let many = work.appendingPathComponent("many")
         try fm.createDirectory(at: many, withIntermediateDirectories: true)
-        for i in 0..<400 { try Data(count: 64 * 1024).write(to: many.appendingPathComponent("f\(i).bin")) }
+        for i in 0..<1500 { try Data(count: 64 * 1024).write(to: many.appendingPathComponent("f\(i).bin")) }
         let before = sh("git rev-parse HEAD", in: clone)
         let upload = Task { try await repo.upload([many], to: "") }
-        try? await Task.sleep(for: .milliseconds(30))
+        // 복사가 시작된 걸 본 뒤 취소한다 (기계가 빨라도 늦지 않게)
+        for _ in 0..<400 where !fm.fileExists(atPath: clone.appendingPathComponent("many/f0.bin").path) {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
         Cancellation.request()
         do { try await upload.value; check(false, "취소하면 업로드가 멈춤") } catch is CancellationError {
             check(true, "취소하면 업로드가 멈춤")
@@ -191,6 +194,23 @@ let work = URL(fileURLWithPath: CommandLine.arguments[1])
         Cancellation.reset()
         check(!fm.fileExists(atPath: clone.appendingPathComponent("many").path), "반쯤 복사된 것은 치움")
         check(sh("git rev-parse HEAD", in: clone) == before, "커밋도 만들지 않음")
+        check(sh("git status --porcelain -- many", in: clone).isEmpty, "Git에 올려 둔 것도 남지 않음")
+
+        // 시작하자마자 취소돼도 되돌림 (맞추기)
+        let late = work.appendingPathComponent("late")
+        try fm.createDirectory(at: late, withIntermediateDirectories: true)
+        try "x".write(to: late.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        Cancellation.request()
+        do {
+            try await repo.syncIn(from: late, files: ["a.txt"], deletes: [], dir: "late-dir")
+            check(false, "시작하자마자 취소")
+        } catch {
+            Cancellation.reset()
+            check(!fm.fileExists(atPath: clone.appendingPathComponent("late-dir").path)
+                  && sh("git status --porcelain -- late-dir", in: clone).isEmpty
+                  && sh("git rev-parse HEAD", in: clone) == before, "시작하자마자 취소돼도 남는 것 없음")
+        }
+        Cancellation.reset()
 
         // GitHub 주소 (주소에 든 토큰은 빼고)
         sh("git remote set-url origin https://me:ghp_secret123@github.com/owner/repo.git", in: clone)
