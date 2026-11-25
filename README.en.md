@@ -26,13 +26,18 @@
 - **Search**: finds names down through subfolders.
 - **Progress log**: what was uploaded and downloaded shows live at the bottom of the window and is kept in a file.
 - **Copy with the middle arrows**: ▶ my folder → Git, ◀ Git → my folder. The ⇄ button compares the two folders and makes one match the other.
-- **Safe uploads**: asks first for files that look secret (`.env`, SSH keys, certificates) and when uploading to a public repository.
+- **Safe uploads**: asks first for files that look secret (`.env`, SSH keys, certificates), files whose contents include keys or tokens, and uploads to a public repository.
 - **File status badges**: files edited directly in the repository folder, files not in Git, files not yet pushed, and large files not yet downloaded are marked.
 - **Tabs and views**: ⌘T opens a tab so you can work with several repositories. Choose list or icon (thumbnail) view, and a side-by-side or stacked folder tree, per pane.
 - **Keyboard**: Tab switches panes, Return opens, ⌘↑ goes up, ⌘⌫ deletes, and typing jumps to that name.
 - **Conflict resolution**: if the same file changed on another Mac, choose mine / theirs / keep both for each file.
 - **Quick Look**: select a file and press Space, like in Finder.
-- **Undo and history**: undo the last Git action with ⌥⌘Z; right-click a file → **History…** to open or restore an earlier version.
+- **Undo and history**: undo the last action (in Git or your folder) with ⌥⌘Z; right-click a file → **History…** to open or restore an earlier version.
+- **Double-click to copy**: double-click a file in your folder to upload it to Git, or a file in Git to download it (switch to "Open" in Settings).
+- **Git Trash and branches**: restore deleted files, and switch or create branches from the Git pane.
+- **New repositories**: create a private repository from the start screen and open it right away.
+- **Repository size**: shows repository and LFS size and warns near GitHub's recommended 1 GB.
+- **Pick up where you left off**: each tab reopens its repository and folder, and tasks started while busy wait their turn.
 - **Private repositories**: signs in through the GitHub CLI (`gh`). No token to paste.
 - **In-app updates**: tells you about new versions, checks the signature, and swaps them in.
 - **English and Korean**: follows your Mac's language at first; change it in Settings.
@@ -96,6 +101,8 @@ After that, Gitty tells you about new versions. You can also check with **Gitty 
 | Language | Follow system / 한국어 / English. Reopen Gitty to apply |
 | Check for new versions automatically | Checks GitHub once a day (on by default) |
 | Install new versions automatically | Installs a found update by itself and relaunches while you aren't using Gitty (on by default) |
+| Double-click a file | Copy to the other side / Open. Asks once the first time |
+| Write a commit message before uploading | Write your own message before each upload (off by default; Gitty writes one otherwise) |
 | Keep the activity log in a file | Records uploaded and downloaded file names and paths in `~/Library/Logs/Gitty` |
 
 ## FAQ

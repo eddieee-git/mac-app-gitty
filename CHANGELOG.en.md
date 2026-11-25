@@ -2,6 +2,15 @@
 
 Details for each version are in [docs/releases](docs/releases) and [GitHub Releases](https://github.com/eddieee-git/mac-app-gitty/releases). 한국어: [CHANGELOG.md](CHANGELOG.md)
 
+## 0.2.3 (2026-11-25)
+
+- Double-click to copy between your folder and Git (asks once; switch to "Open" in Settings)
+- Git Trash, new private repositories, branch switching, repository size meter and warning, optional commit messages
+- Reopens each tab's repository and folder, notifies when long tasks finish
+- Queued tasks, undo for your-folder actions, plain-language errors and offline handling, automatic update installs on by default
+- Scans file contents for keys and tokens before uploading, asks again when a repository becomes public
+- Fixed copied files left behind when cancelling right before a commit; faster folder browsing, bulk deletes, and folder sync
+
 ## 0.2.2 (2026-11-15)
 
 - Updates use the updater shared by all five apps: separate switches for automatic checks (on by default) and automatic installs (off by default), plus **Check Now** in Settings
