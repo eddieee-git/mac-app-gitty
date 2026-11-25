@@ -22,6 +22,8 @@ enum AppFamily {
         Member(name: "Floaty", ko: "플로팅 스티커 메모", en: "Floating sticky notes"),
         Member(name: "Gitty", ko: "Git 저장소를 파일 관리자처럼", en: "Git repositories like a file manager"),
         Member(name: "Grabby", ko: "찍고, 그리고, 바로 붙여 넣는 화면 캡처", en: "Capture, mark up and paste"),
+        Member(name: "Keepy", ko: "복사한 내용을 모아 두고 다시 붙여 넣는 클립보드 기록", en: "Clipboard history to paste again"),
+        Member(name: "Mdy", ko: "더블클릭으로 바로 여는 마크다운 뷰어 겸 편집기", en: "Markdown viewer and editor that opens with a double-click"),
         Member(name: "Peeky", ko: "노치에 가려진 메뉴바 아이콘 꺼내 보기", en: "Menu bar icons hidden behind the notch"),
     ]
 
