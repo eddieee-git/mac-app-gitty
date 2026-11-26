@@ -158,10 +158,6 @@ open build/Gitty.app
 
 | | 앱 | |
 |---|---|---|
-| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-clocky/main/docs/images/icon.png" width="32" alt=""> | [Clocky](https://github.com/eddieee-git/mac-app-clocky) | 메뉴바에서 꺼내 쓰는 넘김시계 타이머·알람·일정 알림 |
-| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-floaty/main/docs/images/icon.png" width="32" alt=""> | [Floaty](https://github.com/eddieee-git/mac-app-floaty) | 메뉴바에서 바로 꺼내 쓰는 플로팅 스티커 메모 |
-| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-grabby/main/docs/images/icon.png" width="32" alt=""> | [Grabby](https://github.com/eddieee-git/mac-app-grabby) | 찍고, 그 자리에서 그리고, 바로 붙여 넣는 화면 캡처 |
-| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-keepy/main/docs/images/icon.png" width="32" alt=""> | [Keepy](https://github.com/eddieee-git/mac-app-keepy) | 복사한 내용을 모아 두고 다시 붙여 넣는 클립보드 기록 |
+| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-epp/main/docs/images/icon.png" width="32" alt=""> | [Epp](https://github.com/eddieee-git/mac-app-epp) | 클립보드·메뉴바·스티커·타이머·캡처를 메뉴바 아이콘 하나에 모은 기능 모음 |
 | <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-mdy/main/docs/images/icon.png" width="32" alt=""> | [Mdy](https://github.com/eddieee-git/mac-app-mdy) | 더블클릭으로 바로 여는 마크다운 뷰어 겸 편집기 |
-| <img src="https://raw.githubusercontent.com/eddieee-git/mac-app-peeky/main/docs/images/icon.png" width="32" alt=""> | [Peeky](https://github.com/eddieee-git/mac-app-peeky) | 노치에 가려진 메뉴바 아이콘을 꺼내 보는 앱 |
 <!-- more-apps:end -->

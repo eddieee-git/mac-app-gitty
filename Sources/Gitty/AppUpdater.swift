@@ -14,7 +14,7 @@ import SwiftUI
 /// - 내려받은 dmg는 Ed25519 `.sig`와 GitHub SHA-256으로 확인하고, 바꿔 넣기 전에 번들 ID·버전·코드 서명도 확인해요.
 /// - 받는 주소는 https GitHub만 허용해요.
 /// - GitHub API가 막히면(403·429) 릴리스 페이지 주소로 최신 버전을 알아내요.
-/// - 샌드박스 앱(Clocky)은 자기 자신을 바꿀 수 없어서, 확인한 dmg를 다운로드 폴더에 받아 열어 줘요.
+/// - 샌드박스 앱은 자기 자신을 바꿀 수 없어서, 확인한 dmg를 다운로드 폴더에 받아 열어 줘요(`.openDownloadedDMG`, 지금 쓰는 앱은 없어요).
 @MainActor
 final class AppUpdater: ObservableObject {
 
@@ -23,7 +23,7 @@ final class AppUpdater: ObservableObject {
     enum SignatureFormat: Sendable {
         /// `.sig` = dmg 파일 전체에 대한 서명
         case dmg
-        /// `.sig` = "<prefix>:<버전>:<dmg SHA-256>" 문자열에 대한 서명 (Clocky)
+        /// `.sig` = "<prefix>:<버전>:<dmg SHA-256>" 문자열에 대한 서명 (옛 Clocky가 쓰던 형식, 지금 쓰는 앱은 없어요)
         case versionedSHA256(prefix: String)
     }
 
@@ -35,7 +35,7 @@ final class AppUpdater: ObservableObject {
     }
 
     struct Config {
-        /// "Peeky". dmg 안의 앱 이름이자 화면에 보이는 이름.
+        /// "Gitty". dmg 안의 앱 이름이자 화면에 보이는 이름.
         var appName: String
         /// "eddieee-git/mac-app-peeky"
         var repo: String
@@ -237,7 +237,11 @@ final class AppUpdater: ObservableObject {
         } catch {
             config.log("update check failed: \(error.localizedDescription)")
             // 자동 확인이 실패했을 때는 이미 찾아 둔 새 버전을 잃지 않게 해요. 한 시간 뒤 다시 시도해요.
-            if !userInitiated, case .available = previous { state = previous } else { state = .failed(error.localizedDescription) }
+            // 릴리스가 없거나 저장소가 비공개면 404예요. 고장이 아니라서 쉬운 말로 보여 줘요.
+            let message = error.localizedDescription.contains("(404)")
+                ? text("아직 내려받을 수 있는 버전이 없어요", "No version is available to download yet")
+                : error.localizedDescription
+            if !userInitiated, case .available = previous { state = previous } else { state = .failed(message) }
             if userInitiated { showError(text("업데이트를 확인하지 못했어요", "Couldn't check for updates"), error) }
         }
     }
